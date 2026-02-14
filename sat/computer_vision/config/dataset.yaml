@@ -1,8 +1,8 @@
 # Satellite Detection Dataset Configuration
 # For 250x250 space images with dot-like satellites/debris
 
-# Dataset root directory (relative to train.py location)
-path: ./data
+# Dataset root directory - ABSOLUTE PATH
+path: /home/asus/treesats/sat/computer_vision/data
 
 # Train/val/test image directories (relative to path)
 train: images/train
