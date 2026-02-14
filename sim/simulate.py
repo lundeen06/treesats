@@ -20,7 +20,7 @@ try:
 except Exception as e:
     print(f"CUDA not available ({e}) - will use CPU backend")
 
-def create_constellation(n_sats=10000):
+def create_constellation(n_sats=10000, sat=None):
     """
     Create a constellation of satellites distributed across standard orbital bands.
 
@@ -28,11 +28,22 @@ def create_constellation(n_sats=10000):
     -----------
     n_sats : int
         Total number of satellites to simulate (default: 10000)
+    sat : dict, optional
+        Orbital elements for the satellite of interest (will be at index 0).
+        If provided, satellite 0 will use these specific orbital parameters.
+        Dictionary should contain:
+            'altitude': altitude in km above Earth's surface
+            'eccentricity': orbital eccentricity (0 for circular)
+            'inclination': orbital inclination in degrees
+            'omega': argument of periapsis in degrees
+            'Omega': RAAN (right ascension of ascending node) in degrees
+            'M': mean anomaly in degrees
 
     Returns:
     --------
-    constellation : dict
-        Dictionary of Keplerian orbital elements for tensorgator
+    constellation : ndarray
+        Array of Keplerian orbital elements [a, e, i, omega, Omega, M] for tensorgator
+        Satellite of interest is at index 0, remaining satellites fill the constellation.
     """
 
     # Define orbital bands (semi-major axis in km, inclination in degrees)
@@ -42,9 +53,6 @@ def create_constellation(n_sats=10000):
         {"altitude": 500, "inclination": 30.0},   # Low inclination
         {"altitude": 700, "inclination": 0.0},    # Equatorial
     ]
-
-    # Distribute satellites across bands
-    sats_per_band = n_sats // len(bands)
 
     # Earth radius in km
     earth_radius = 6371.0
@@ -57,6 +65,26 @@ def create_constellation(n_sats=10000):
     Omega_list = []  # RAAN (Right Ascension of Ascending Node)
     M_list = []  # Mean anomaly
 
+    # Add the satellite of interest first (index 0)
+    sat_index = 0
+    if sat is not None:
+        # Add satellite of interest with specified orbital elements
+        a_list.append(earth_radius + sat['altitude'])
+        e_list.append(sat.get('eccentricity', 0.0))
+        i_list.append(np.radians(sat['inclination']))
+        omega_list.append(np.radians(sat.get('omega', 0.0)))
+        Omega_list.append(np.radians(sat.get('Omega', 0.0)))
+        M_list.append(np.radians(sat.get('M', 0.0)))
+        sat_index = 1
+        print(f"Satellite of interest (index 0) configured:")
+        print(f"  Altitude: {sat['altitude']} km")
+        print(f"  Inclination: {sat['inclination']}°")
+        print(f"  Eccentricity: {sat.get('eccentricity', 0.0)}")
+
+    # Distribute remaining satellites across bands
+    remaining_sats = n_sats - sat_index
+    sats_per_band = remaining_sats // len(bands)
+
     for band in bands:
         # Semi-major axis (radius in km)
         a = earth_radius + band["altitude"]
@@ -65,7 +93,8 @@ def create_constellation(n_sats=10000):
         for _ in range(sats_per_band):
             a_list.append(a)
             e_list.append(0.0)  # Circular orbits
-            i_list.append(np.radians(band["inclination"]))
+            # Randomize inclination within ±5 degrees of the band inclination
+            i_list.append(np.radians(band["inclination"] + np.random.uniform(-5, 5)))
 
             # Randomize RAAN and mean anomaly for distribution
             omega_list.append(0.0)  # Circular orbit, so argument of periapsis doesn't matter
@@ -86,7 +115,7 @@ def create_constellation(n_sats=10000):
     return constellation
 
 
-def run_simulation(n_sats=10000, n_timesteps=100, duration_hours=24):
+def run_simulation(n_sats=10000, n_timesteps=100, duration_hours=24, sat=None):
     """
     Run GPU-accelerated satellite simulation.
 
@@ -98,16 +127,19 @@ def run_simulation(n_sats=10000, n_timesteps=100, duration_hours=24):
         Number of time steps
     duration_hours : float
         Simulation duration in hours
+    sat : dict, optional
+        Orbital elements for satellite of interest (see create_constellation for format)
     """
 
     print(f"Setting up constellation with {n_sats} satellites...")
-    constellation = create_constellation(n_sats)
+    constellation = create_constellation(n_sats, sat=sat)
 
     # Create time array
     time_array = np.linspace(0, duration_hours * 3600, n_timesteps)  # Convert hours to seconds
 
     # Select backend based on CUDA availability
-    backend = 'cuda' if CUDA_AVAILABLE else 'cpu'
+    # backend = 'cpu' if CUDA_AVAILABLE else 'cpu'
+    backend = 'cpu' # for now use cpu for propagation
 
     print(f"Running simulation for {n_timesteps} timesteps over {duration_hours} hours...")
     print(f"Using backend: {backend.upper()}")
@@ -124,6 +156,9 @@ def run_simulation(n_sats=10000, n_timesteps=100, duration_hours=24):
     )
 
     elapsed = time.time() - start_time
+
+    # Tensorgator returns shape (satellites, timesteps, xyz), we want (timesteps, satellites, xyz)
+    positions = np.transpose(positions, (1, 0, 2))
 
     print(f"\n✓ Simulation complete!")
     print(f"  Time elapsed: {elapsed:.3f} seconds")
@@ -149,23 +184,83 @@ if __name__ == "__main__":
                         help='Path to save visualization (default: display interactively)')
     args = parser.parse_args()
 
-    # Run simulation with defaults
+    # Define the satellite of interest (index 0 in the constellation)
+    sat = {
+        'altitude': 550,        # km above Earth's surface
+        'eccentricity': 0.0,    # 0 = circular orbit
+        'inclination': 53.0,    # degrees
+        'omega': 0.0,           # argument of periapsis (degrees)
+        'Omega': 0.0,           # RAAN - right ascension of ascending node (degrees)
+        'M': 0.0                # mean anomaly (degrees) - starting position in orbit
+    }
+
+    # Run simulation
     positions, times, constellation = run_simulation(
         n_sats=10000,
         n_timesteps=100,
-        duration_hours=args.duration
+        duration_hours=args.duration,
+        sat=sat
     )
 
-    # Example: Access position of first satellite at first timestep
-    print(f"\nExample - First satellite position at t=0:")
+    # Access position of satellite of interest at first timestep
+    print(f"\nSatellite of interest position at t=0:")
     print(f"  X: {positions[0, 0, 0]:.2f} km")
     print(f"  Y: {positions[0, 0, 1]:.2f} km")
     print(f"  Z: {positions[0, 0, 2]:.2f} km")
 
-    # TODO: Future extension - generate star tracker data
-    # This would involve:
-    # 1. Choose observer satellite
-    # 2. Transform all other satellites to observer's reference frame
-    # 3. Project positions onto 2D image plane
-    # 4. Filter by field of view
-    # 5. Generate dot pattern representing visible satellites
+    # Generate star tracker images
+    print(f"\nGenerating star tracker images...")
+    from star_tracker import render_star_tracker_sequence
+    import matplotlib.pyplot as plt
+    from PIL import Image
+    import os
+
+    # Render image sequence
+    images, visible_sats_list, pixel_coords_list = render_star_tracker_sequence(
+        positions,
+        observer_index=0,
+        fov_deg=15.0,
+        image_size=256
+    )
+
+    print(f"Star tracker images rendered:")
+    print(f"  Total timesteps: {len(images)}")
+    print(f"  Visible satellites per timestep: {[len(v) for v in visible_sats_list]}")
+
+    # Create output directory
+    output_dir = os.path.join(os.path.dirname(__file__), '..', 'sat', 'data')
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Save raw 256x256 star tracker images
+    print(f"\nSaving raw star tracker images to {output_dir}/...")
+    for i, img_array in enumerate(images):
+        # Convert to 8-bit grayscale (0-255)
+        img_uint8 = (img_array * 255).astype(np.uint8)
+        img = Image.fromarray(img_uint8, mode='L')
+        img_path = os.path.join(output_dir, f'star_tracker_{i:04d}.png')
+        img.save(img_path)
+
+    print(f"Saved {len(images)} raw star tracker images (256x256 pixels)")
+
+    # Visualize if requested
+    if args.visualize:
+        n_plots = min(10, len(images))
+        fig, axes = plt.subplots(2, 5, figsize=(15, 6))
+        axes = axes.flatten()
+
+        for i in range(n_plots):
+            axes[i].imshow(images[i], cmap='gray', origin='lower')
+            axes[i].set_title(f't={i} ({len(visible_sats_list[i])} sats)')
+            axes[i].axis('off')
+
+        plt.suptitle('Star Tracker Image Sequence (Camera pointing in +x_eci)', fontsize=14)
+        plt.tight_layout()
+
+        if args.save:
+            save_path = os.path.join(output_dir, os.path.basename(args.save))
+            plt.savefig(save_path, dpi=150, bbox_inches='tight')
+            print(f"\nVisualization saved to: {save_path}")
+        else:
+            save_path = os.path.join(output_dir, 'star_tracker_sequence.png')
+            plt.savefig(save_path, dpi=150, bbox_inches='tight')
+            print(f"\nVisualization saved to: {save_path}")
