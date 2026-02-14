@@ -47,25 +47,8 @@ def create_constellation(n_sats=10000, sat=None):
         Satellite of interest is at index 0, remaining satellites randomly distributed.
     """
 
-    # Define realistic orbital shells (altitude-inclination pairs)
-    # Based on real constellations like Starlink, OneWeb, etc.
-    shells = [
-        # Low equatorial shells
-        {"name": "LEO Equatorial Low", "altitude": 450, "altitude_var": 30, "inclination": 5.0, "inc_var": 5},
-        {"name": "LEO Equatorial Mid", "altitude": 550, "altitude_var": 30, "inclination": 5.0, "inc_var": 5},
-
-        # Mid-inclination (Starlink-like)
-        {"name": "Mid-Inc Shell 1", "altitude": 540, "altitude_var": 20, "inclination": 53.0, "inc_var": 3},
-        {"name": "Mid-Inc Shell 2", "altitude": 570, "altitude_var": 20, "inclination": 53.2, "inc_var": 3},
-
-        # Sun-synchronous orbits (different altitudes)
-        {"name": "SSO Low", "altitude": 600, "altitude_var": 25, "inclination": 97.6, "inc_var": 2},
-        {"name": "SSO High", "altitude": 700, "altitude_var": 30, "inclination": 98.2, "inc_var": 2},
-
-        # Polar orbits
-        {"name": "Polar Low", "altitude": 500, "altitude_var": 30, "inclination": 87.5, "inc_var": 4},
-        {"name": "Polar High", "altitude": 650, "altitude_var": 40, "inclination": 88.0, "inc_var": 4},
-    ]
+    # Get orbital shells configuration from params
+    shells = CONSTELLATION['orbital_shells']
 
     # Earth radius in meters (tensorgator expects meters!)
     earth_radius = CONSTANTS['earth_radius_m']
@@ -212,30 +195,15 @@ def run_simulation(n_sats=10000, duration_hours=24, dt_seconds=60, sat=None):
     return positions, time_array, constellation
 
 
-if __name__ == "__main__":
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description='Run satellite constellation simulation')
-    parser.add_argument('--duration', type=float, default=SIMULATION['duration_hours'],
-                        help=f'Simulation duration in hours (default: {SIMULATION["duration_hours"]:.2f} hours)')
-    parser.add_argument('--dt', type=float, default=SIMULATION['dt_seconds'],
-                        help=f'Time step in seconds (default: {SIMULATION["dt_seconds"]})')
-    parser.add_argument('--visualize', action='store_true',
-                        help='Generate 3D visualization of satellite orbits and star tracker images')
-    parser.add_argument('--save', type=str, default=None,
-                        help='Path to save orbit visualization (default: saves to sim/plots/)')
-    parser.add_argument('--animate', action='store_true',
-                        help='Create animated visualization of orbits (requires --visualize)')
-    parser.add_argument('--animation-fps', type=int, default=VISUALIZATION['animation_fps'],
-                        help=f'Frames per second for animation (default: {VISUALIZATION["animation_fps"]})')
-    parser.add_argument('--animation-frames', type=int, default=VISUALIZATION['animation_max_frames'],
-                        help=f'Maximum number of frames in animation (default: {VISUALIZATION["animation_max_frames"]})')
-    parser.add_argument('--max-satellites', type=int, default=VISUALIZATION['max_satellites'],
-                        help='Maximum number of satellites to show in plots (default: all)')
-    parser.add_argument('--earth-resolution', type=str, default=VISUALIZATION['earth_resolution'],
-                        choices=['low', 'medium', 'high', 'ultra'],
-                        help=f'Earth texture resolution: low, medium, high, ultra (default: {VISUALIZATION["earth_resolution"]})')
-    args = parser.parse_args()
+def generate_training_data(args):
+    """
+    Generate training data: run full simulation and save star tracker images.
 
+    Parameters:
+    -----------
+    args : argparse.Namespace
+        Command line arguments
+    """
     # Run simulation
     positions, times, constellation = run_simulation(
         n_sats=CONSTELLATION['n_satellites'],
@@ -410,3 +378,115 @@ if __name__ == "__main__":
         plt.savefig(tracker_save_path, dpi=150, bbox_inches='tight')
         print(f"Star tracker visualization saved to: {tracker_save_path}")
         plt.close()
+
+    return positions, times, constellation, images
+
+
+def run_pipeline(args):
+    """
+    Run full pipeline: generate image → autolabel → angles-only nav.
+
+    Parameters:
+    -----------
+    args : argparse.Namespace
+        Command line arguments
+    """
+    import matplotlib.pyplot as plt
+    from PIL import Image
+    import os
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+    print("="*80)
+    print("RUNNING FULL PIPELINE")
+    print("="*80)
+
+    # Step 1: Generate simulation (smaller for testing)
+    print("\n[1/3] Generating simulation...")
+    positions, times, constellation = run_simulation(
+        n_sats=CONSTELLATION['n_satellites'],
+        duration_hours=args.duration,
+        dt_seconds=args.dt,
+        sat=SATELLITE
+    )
+
+    # Step 2: Generate star tracker image
+    print("\n[2/3] Generating star tracker image...")
+    from star_tracker import render_star_tracker_sequence
+    from sat.control.rtn_to_eci_propagate import eci_to_rtn_basis
+
+    # Calculate observer velocity for RTN frame
+    observer_pos_km = positions[:, 0, :] / 1000
+    dt = times[1] - times[0]
+    observer_vel_km_s = np.zeros_like(observer_pos_km)
+    observer_vel_km_s[0] = (observer_pos_km[1] - observer_pos_km[0]) / dt
+    observer_vel_km_s[-1] = (observer_pos_km[-1] - observer_pos_km[-2]) / dt
+    observer_vel_km_s[1:-1] = (observer_pos_km[2:] - observer_pos_km[:-2]) / (2 * dt)
+
+    # Get T direction for camera pointing
+    basis_rtn = eci_to_rtn_basis(observer_pos_km[0], observer_vel_km_s[0])
+    t_direction_eci = basis_rtn[1, :]
+
+    # Render images
+    images, visible_sats_list, pixel_coords_list = render_star_tracker_sequence(
+        positions,
+        observer_index=STAR_TRACKER['observer_index'],
+        fov_deg=STAR_TRACKER['fov_deg'],
+        image_size=STAR_TRACKER['image_size'],
+        pointing_direction=t_direction_eci
+    )
+
+    print(f"Generated {len(images)} star tracker images")
+    print(f"Visible satellites per timestep: {[len(v) for v in visible_sats_list[:5]]}...")
+
+    # Step 3: Run autolabeler and angles-only nav
+    print("\n[3/3] Running autolabeler → angles-only nav...")
+    # TODO: Hook up autolabeler and navigation code
+    print("  → Autolabeler: TODO")
+    print("  → Angles-only nav: TODO")
+
+    print("\n" + "="*80)
+    print("PIPELINE COMPLETE")
+    print("="*80)
+
+
+if __name__ == "__main__":
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Run satellite constellation simulation')
+
+    # Mode selection
+    parser.add_argument('--mode', type=str, default='train', choices=['train', 'pipeline'],
+                        help='Mode: train (generate training data) or pipeline (run full system)')
+
+    # Simulation parameters
+    parser.add_argument('--duration', type=float, default=SIMULATION['duration_hours'],
+                        help=f'Simulation duration in hours (default: {SIMULATION["duration_hours"]:.2f} hours)')
+    parser.add_argument('--dt', type=float, default=SIMULATION['dt_seconds'],
+                        help=f'Time step in seconds (default: {SIMULATION["dt_seconds"]})')
+
+    # Visualization parameters (for train mode)
+    parser.add_argument('--visualize', action='store_true',
+                        help='Generate 3D visualization of satellite orbits and star tracker images')
+    parser.add_argument('--save', type=str, default=None,
+                        help='Path to save orbit visualization (default: saves to sim/plots/)')
+    parser.add_argument('--animate', action='store_true',
+                        help='Create animated visualization of orbits (requires --visualize)')
+    parser.add_argument('--animation-fps', type=int, default=VISUALIZATION['animation_fps'],
+                        help=f'Frames per second for animation (default: {VISUALIZATION["animation_fps"]})')
+    parser.add_argument('--animation-frames', type=int, default=VISUALIZATION['animation_max_frames'],
+                        help=f'Maximum number of frames in animation (default: {VISUALIZATION["animation_max_frames"]})')
+    parser.add_argument('--max-satellites', type=int, default=VISUALIZATION['max_satellites'],
+                        help='Maximum number of satellites to show in plots (default: all)')
+    parser.add_argument('--earth-resolution', type=str, default=VISUALIZATION['earth_resolution'],
+                        choices=['low', 'medium', 'high', 'ultra'],
+                        help=f'Earth texture resolution: low, medium, high, ultra (default: {VISUALIZATION["earth_resolution"]})')
+
+    args = parser.parse_args()
+
+    # Run appropriate mode
+    if args.mode == 'train':
+        print("Running in TRAINING DATA GENERATION mode\n")
+        generate_training_data(args)
+    elif args.mode == 'pipeline':
+        print("Running in FULL PIPELINE mode\n")
+        run_pipeline(args)

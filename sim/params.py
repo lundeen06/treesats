@@ -24,12 +24,25 @@ SATELLITE = {
 
 CONSTELLATION = {
     'n_satellites': 10000,  # Total number of satellites in simulation
-    'orbital_bands': [
-        # Define orbital bands for constellation (altitude in km, inclination in degrees)
-        {"altitude": 550, "inclination": 53.0},   # Starlink-like
-        {"altitude": 600, "inclination": 97.6},   # Sun-synchronous orbit (SSO)
-        {"altitude": 500, "inclination": 30.0},   # Low inclination
-        {"altitude": 700, "inclination": 0.0},    # Equatorial
+
+    # Realistic orbital shells (altitude-inclination pairs)
+    # Based on real constellations like Starlink, OneWeb, etc.
+    'orbital_shells': [
+        # Low equatorial shells
+        {"name": "LEO Equatorial Low", "altitude": 450, "altitude_var": 30, "inclination": 5.0, "inc_var": 5},
+        {"name": "LEO Equatorial Mid", "altitude": 550, "altitude_var": 30, "inclination": 5.0, "inc_var": 5},
+
+        # Mid-inclination (Starlink-like)
+        {"name": "Mid-Inc Shell 1", "altitude": 540, "altitude_var": 20, "inclination": 53.0, "inc_var": 3},
+        {"name": "Mid-Inc Shell 2", "altitude": 570, "altitude_var": 20, "inclination": 53.2, "inc_var": 3},
+
+        # Sun-synchronous orbits (different altitudes)
+        {"name": "SSO Low", "altitude": 600, "altitude_var": 25, "inclination": 97.6, "inc_var": 2},
+        {"name": "SSO High", "altitude": 700, "altitude_var": 30, "inclination": 98.2, "inc_var": 2},
+
+        # Polar orbits
+        {"name": "Polar Low", "altitude": 500, "altitude_var": 30, "inclination": 87.5, "inc_var": 4},
+        {"name": "Polar High", "altitude": 650, "altitude_var": 40, "inclination": 88.0, "inc_var": 4},
     ]
 }
 
@@ -39,7 +52,7 @@ CONSTELLATION = {
 
 SIMULATION = {
     'duration_hours': 100/60,  # Simulation duration in hours (default: 100 minutes)
-    'dt_seconds': 5,           # Time step in seconds
+    'dt_seconds': 1,           # Time step in seconds
     'backend': 'cpu',          # 'cpu' or 'gpu' (if CUDA available)
     'random_seed': 21          # Random seed for reproducibility
 }
