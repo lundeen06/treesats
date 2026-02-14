@@ -7,6 +7,7 @@ import tensorgator as tg
 import time
 import sys
 import argparse
+from params import SATELLITE, CONSTELLATION, SIMULATION, STAR_TRACKER, VISUALIZATION, CONSTANTS, PATHS
 
 # Check if CUDA is available
 CUDA_AVAILABLE = False
@@ -55,7 +56,7 @@ def create_constellation(n_sats=10000, sat=None):
     ]
 
     # Earth radius in meters (tensorgator expects meters!)
-    earth_radius = 6378136.3  # meters
+    earth_radius = CONSTANTS['earth_radius_m']
 
     # Initialize arrays for Keplerian elements
     a_list = []  # Semi-major axis
@@ -133,7 +134,7 @@ def run_simulation(n_sats=10000, duration_hours=24, dt_seconds=60, sat=None):
         Orbital elements for satellite of interest (see create_constellation for format)
     """
 
-    np.random.seed(21)
+    np.random.seed(SIMULATION['random_seed'])
 
     print(f"Setting up constellation with {n_sats} satellites...")
     constellation = create_constellation(n_sats, sat=sat)
@@ -144,8 +145,7 @@ def run_simulation(n_sats=10000, duration_hours=24, dt_seconds=60, sat=None):
     n_timesteps = len(time_array)
 
     # Select backend based on CUDA availability
-    # backend = 'cpu' if CUDA_AVAILABLE else 'cpu'
-    backend = 'cpu' # for now use cpu for propagation
+    backend = SIMULATION['backend']
 
     print(f"Running simulation for {n_timesteps} timesteps over {duration_hours} hours (dt={dt_seconds}s)...")
     print(f"Using backend: {backend.upper()}")
@@ -182,38 +182,33 @@ def run_simulation(n_sats=10000, duration_hours=24, dt_seconds=60, sat=None):
 if __name__ == "__main__":
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Run satellite constellation simulation')
-    parser.add_argument('--duration', type=float, default=100/60,
-                        help='Simulation duration in hours (default: 100 minutes)')
-    parser.add_argument('--dt', type=float, default=5,
-                        help='Time step in seconds (default: 5)')
+    parser.add_argument('--duration', type=float, default=SIMULATION['duration_hours'],
+                        help=f'Simulation duration in hours (default: {SIMULATION["duration_hours"]:.2f} hours)')
+    parser.add_argument('--dt', type=float, default=SIMULATION['dt_seconds'],
+                        help=f'Time step in seconds (default: {SIMULATION["dt_seconds"]})')
     parser.add_argument('--visualize', action='store_true',
                         help='Generate 3D visualization of satellite orbits and star tracker images')
     parser.add_argument('--save', type=str, default=None,
-                        help='Path to save orbit visualization (default: saves to sat/data/)')
+                        help='Path to save orbit visualization (default: saves to sim/plots/)')
     parser.add_argument('--animate', action='store_true',
                         help='Create animated visualization of orbits (requires --visualize)')
-    parser.add_argument('--animation-fps', type=int, default=10,
-                        help='Frames per second for animation (default: 10)')
-    parser.add_argument('--animation-frames', type=int, default=200,
-                        help='Maximum number of frames in animation (default: 200)')
+    parser.add_argument('--animation-fps', type=int, default=VISUALIZATION['animation_fps'],
+                        help=f'Frames per second for animation (default: {VISUALIZATION["animation_fps"]})')
+    parser.add_argument('--animation-frames', type=int, default=VISUALIZATION['animation_max_frames'],
+                        help=f'Maximum number of frames in animation (default: {VISUALIZATION["animation_max_frames"]})')
+    parser.add_argument('--max-satellites', type=int, default=VISUALIZATION['max_satellites'],
+                        help='Maximum number of satellites to show in plots (default: all)')
+    parser.add_argument('--earth-resolution', type=str, default=VISUALIZATION['earth_resolution'],
+                        choices=['low', 'medium', 'high', 'ultra'],
+                        help=f'Earth texture resolution: low, medium, high, ultra (default: {VISUALIZATION["earth_resolution"]})')
     args = parser.parse_args()
-
-    # Define the satellite of interest (index 0 in the constellation)
-    sat = {
-        'altitude': 550,        # km above Earth's surface
-        'eccentricity': 0.0001, # 0 = circular orbit
-        'inclination': 53.0,    # degrees
-        'omega': 0.0,           # argument of periapsis (degrees)
-        'Omega': 0.0,           # RAAN - right ascension of ascending node (degrees)
-        'M': 0.0                # mean anomaly (degrees) - starting position in orbit
-    }
 
     # Run simulation
     positions, times, constellation = run_simulation(
-        n_sats=10000,
+        n_sats=CONSTELLATION['n_satellites'],
         duration_hours=args.duration,
         dt_seconds=args.dt,
-        sat=sat
+        sat=SATELLITE
     )
 
     # Print detailed position evolution for satellite 0
@@ -224,7 +219,7 @@ if __name__ == "__main__":
     print(f"{'-'*80}")
 
     # Expected orbital velocity for satellite 0
-    mu = 3.986004418e14  # m^3/s^2
+    mu = CONSTANTS['mu']
     a0 = constellation[0, 0]  # semi-major axis in meters
     expected_velocity = np.sqrt(mu / a0) / 1000  # km/s
     print(f"Expected orbital velocity: {expected_velocity:.3f} km/s\n")
@@ -277,9 +272,9 @@ if __name__ == "__main__":
     # Render image sequence with T-direction pointing
     images, visible_sats_list, pixel_coords_list = render_star_tracker_sequence(
         positions,
-        observer_index=0,
-        fov_deg=15.0,
-        image_size=256,
+        observer_index=STAR_TRACKER['observer_index'],
+        fov_deg=STAR_TRACKER['fov_deg'],
+        image_size=STAR_TRACKER['image_size'],
         pointing_direction=t_direction_eci
     )
 
@@ -288,7 +283,7 @@ if __name__ == "__main__":
     print(f"  Visible satellites per timestep: {[len(v) for v in visible_sats_list]}")
 
     # Create output directory
-    output_dir = os.path.join(os.path.dirname(__file__), '..', 'sat', 'data')
+    output_dir = PATHS['data_dir']
     os.makedirs(output_dir, exist_ok=True)
 
     # Save raw 256x256 star tracker images
@@ -307,10 +302,8 @@ if __name__ == "__main__":
     try:
         import cv2
 
-        # Video parameters
-        fps = int(1 / args.dt)  # Frame rate matches simulation timestep (e.g., 1/5 = 0.2 fps for 5s timesteps)
-        # For faster playback, use a higher fps
-        video_fps = max(10, fps)  # At least 10 fps for smooth playback
+        # Video parameters - 30 fps by default for smooth playback
+        video_fps = 30
 
         video_path = os.path.join(output_dir, 'star_tracker_sequence.mp4')
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
@@ -332,33 +325,40 @@ if __name__ == "__main__":
     if args.visualize:
         # 1. Visualize 3D orbits around Earth
         print(f"\nGenerating 3D orbit visualization...")
-        from visualize_orbits import visualize_orbits, animate_orbits
+        from plots import plot_orbits_static, animate_orbits_fast
 
-        # Save orbit visualization in sim folder
-        sim_dir = os.path.dirname(__file__)
-        orbit_save_path = os.path.join(sim_dir, 'orbit_visualization.png') if not args.save else args.save
-        visualize_orbits(
+        # Create plots output directory
+        plots_dir = PATHS['plots_dir']
+        os.makedirs(plots_dir, exist_ok=True)
+
+        # Earth texture path
+        earth_texture_path = PATHS['earth_texture']
+
+        # Save orbit visualization in sim/plots folder
+        orbit_save_path = os.path.join(plots_dir, 'orbit_visualization.png') if not args.save else args.save
+        plot_orbits_static(
             positions,
-            constellation=constellation,
             save_path=orbit_save_path,
-            show_trails=False,  # No trails in static image
-            title=f'Satellite Constellation Orbits\n{positions.shape[1]} satellites over {args.duration} hours'
+            title=f'Satellite Positions\n{positions.shape[1]} satellites over {args.duration*60:.0f} minutes',
+            max_satellites=args.max_satellites,
+            earth_texture_path=earth_texture_path
         )
         print(f"3D orbit visualization saved to: {orbit_save_path}")
 
         # Create animation if requested
         if args.animate:
-            print(f"\nGenerating orbit animation...")
-            anim_save_path = os.path.join(sim_dir, 'orbit_animation.gif')
-            animate_orbits(
+            print(f"\nGenerating fast orbit animation...")
+            anim_save_path = os.path.join(plots_dir, 'orbit_animation.gif')
+            animate_orbits_fast(
                 positions,
-                time_array=times,
-                constellation=constellation,
+                times=times,
                 save_path=anim_save_path,
                 fps=args.animation_fps,
-                max_frames=args.animation_frames
+                max_frames=args.animation_frames,
+                max_satellites=args.max_satellites,
+                earth_texture_path=earth_texture_path
             )
-            print(f"Animation saved! Duration: ~{args.animation_frames/args.animation_fps:.1f} seconds")
+            print(f"Animation complete!")
 
         # 2. Visualize star tracker image sequence
         n_plots = min(10, len(images))
