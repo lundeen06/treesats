@@ -1,0 +1,3 @@
+"""
+Satellite onboard systems module.
+"""

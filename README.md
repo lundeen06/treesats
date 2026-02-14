@@ -1,6 +1,19 @@
 # treesats
 
-GPU-accelerated satellite constellation simulation using Tensorgator.
+GPU-accelerated satellite constellation simulation and onboard algorithms.
+
+## Structure
+
+```
+treesats/
+├── sim/              # Physics simulation (Tensorgator-based)
+│   └── simulate.py   # Constellation propagation
+├── sat/              # Satellite onboard systems
+│   ├── cv/           # Computer vision algorithms
+│   ├── ctrl/         # Attitude control
+│   └── sensors/      # Sensor models
+└── tests/            # Test suite
+```
 
 ## Quick Start
 
@@ -11,18 +24,24 @@ GPU-accelerated satellite constellation simulation using Tensorgator.
 
 2. **Run the simulation:**
    ```bash
-   python simulate.py
+   python sim/simulate.py
    ```
 
 This will simulate 10,000 satellites across 4 orbital bands over 24 hours using GPU acceleration.
 
-## Overview
+## Simulation (`sim/`)
 
 Uses [Tensorgator](https://github.com/ApoPeri/TensorGator) to efficiently simulate large satellite constellations on GPU. Currently simulates 10k satellites across standard orbital bands:
 - 550 km altitude, 53° inclination (Starlink-like)
 - 600 km altitude, 97.6° inclination (Sun-Synchronous)
 - 500 km altitude, 30° inclination (Low inclination)
 - 700 km altitude, 0° inclination (Equatorial)
+
+## Satellite Onboard (`sat/`)
+
+- **`cv/`** - Computer vision algorithms for star tracking and pose estimation
+- **`ctrl/`** - Attitude control and guidance algorithms
+- **`sensors/`** - Sensor models (star tracker, IMU, etc.)
 
 ## Requirements
 
@@ -32,6 +51,7 @@ Uses [Tensorgator](https://github.com/ApoPeri/TensorGator) to efficiently simula
 
 ## Future Work
 
-- Star tracker data generation (projecting satellite positions as dots in camera frame)
-- Visualization tools
-- Custom orbital configurations
+- Star tracker image generation (render satellites as dots in camera frame)
+- Pose estimation from star tracker data
+- Relative navigation algorithms
+- Attitude control implementation
