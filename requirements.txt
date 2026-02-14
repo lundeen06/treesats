@@ -1,3 +1,4 @@
 tensorgator
 numpy
 matplotlib
+tqdm
