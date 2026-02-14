@@ -192,10 +192,15 @@ if __name__ == "__main__":
                         help='Path to save orbit visualization (default: saves to sat/data/)')
     parser.add_argument('--animate', action='store_true',
                         help='Create animated visualization of orbits (requires --visualize)')
-    parser.add_argument('--animation-fps', type=int, default=10,
-                        help='Frames per second for animation (default: 10)')
+    parser.add_argument('--animation-fps', type=int, default=30,
+                        help='Frames per second for animation (default: 30)')
     parser.add_argument('--animation-frames', type=int, default=200,
                         help='Maximum number of frames in animation (default: 200)')
+    parser.add_argument('--max-satellites', type=int, default=None,
+                        help='Maximum number of satellites to show in plots (default: all)')
+    parser.add_argument('--earth-resolution', type=str, default='medium',
+                        choices=['low', 'medium', 'high', 'ultra'],
+                        help='Earth texture resolution: low, medium, high, ultra (default: medium)')
     args = parser.parse_args()
 
     # Define the satellite of interest (index 0 in the constellation)
@@ -307,10 +312,8 @@ if __name__ == "__main__":
     try:
         import cv2
 
-        # Video parameters
-        fps = int(1 / args.dt)  # Frame rate matches simulation timestep (e.g., 1/5 = 0.2 fps for 5s timesteps)
-        # For faster playback, use a higher fps
-        video_fps = max(10, fps)  # At least 10 fps for smooth playback
+        # Video parameters - 30 fps by default for smooth playback
+        video_fps = 30
 
         video_path = os.path.join(output_dir, 'star_tracker_sequence.mp4')
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
@@ -332,33 +335,41 @@ if __name__ == "__main__":
     if args.visualize:
         # 1. Visualize 3D orbits around Earth
         print(f"\nGenerating 3D orbit visualization...")
-        from visualize_orbits import visualize_orbits, animate_orbits
+        from plots import plot_orbits_static, animate_orbits_fast
 
-        # Save orbit visualization in sim folder
+        # Create plots output directory
         sim_dir = os.path.dirname(__file__)
-        orbit_save_path = os.path.join(sim_dir, 'orbit_visualization.png') if not args.save else args.save
-        visualize_orbits(
+        plots_dir = os.path.join(sim_dir, 'plots')
+        os.makedirs(plots_dir, exist_ok=True)
+
+        # Earth texture path
+        earth_texture_path = os.path.join(sim_dir, 'assets', 'earth.jpeg')
+
+        # Save orbit visualization in sim/plots folder
+        orbit_save_path = os.path.join(plots_dir, 'orbit_visualization.png') if not args.save else args.save
+        plot_orbits_static(
             positions,
-            constellation=constellation,
             save_path=orbit_save_path,
-            show_trails=False,  # No trails in static image
-            title=f'Satellite Constellation Orbits\n{positions.shape[1]} satellites over {args.duration} hours'
+            title=f'Satellite Positions\n{positions.shape[1]} satellites over {args.duration*60:.0f} minutes',
+            max_satellites=args.max_satellites,
+            earth_texture_path=earth_texture_path
         )
         print(f"3D orbit visualization saved to: {orbit_save_path}")
 
         # Create animation if requested
         if args.animate:
-            print(f"\nGenerating orbit animation...")
-            anim_save_path = os.path.join(sim_dir, 'orbit_animation.gif')
-            animate_orbits(
+            print(f"\nGenerating fast orbit animation...")
+            anim_save_path = os.path.join(plots_dir, 'orbit_animation.gif')
+            animate_orbits_fast(
                 positions,
-                time_array=times,
-                constellation=constellation,
+                times=times,
                 save_path=anim_save_path,
                 fps=args.animation_fps,
-                max_frames=args.animation_frames
+                max_frames=args.animation_frames,
+                max_satellites=args.max_satellites,
+                earth_texture_path=earth_texture_path
             )
-            print(f"Animation saved! Duration: ~{args.animation_frames/args.animation_fps:.1f} seconds")
+            print(f"Animation complete!")
 
         # 2. Visualize star tracker image sequence
         n_plots = min(10, len(images))
