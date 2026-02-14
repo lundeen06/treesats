@@ -11,6 +11,57 @@ import numpy as np
 MU_EARTH = 398600.4418  # km^3/s^2
 
 
+def eci_to_rtn_basis(pos_eci, vel_eci):
+    """
+    Compute RTN basis vectors (rows) from observer position and velocity in ECI.
+
+    Same convention as relative_rtn_to_absolute_eci: R = radial, T = along-track, N = cross-track.
+    Returns 3x3 with rows (R, T, N) in ECI components so that v_rtn = basis_rtn @ v_eci.
+
+    Parameters
+    ----------
+    pos_eci, vel_eci : array_like shape (3,)
+        Observer position and velocity in ECI (e.g. km, km/s).
+
+    Returns
+    -------
+    basis_rtn : ndarray shape (3, 3)
+        Rows are R, T, N unit vectors in ECI. v_rtn = basis_rtn @ v_eci.
+    """
+    r = np.asarray(pos_eci, dtype=float).reshape(3)
+    v = np.asarray(vel_eci, dtype=float).reshape(3)
+    u_r = r / np.linalg.norm(r)
+    h_vec = np.cross(r, v)
+    h = np.linalg.norm(h_vec)
+    if h < 1e-12:
+        if abs(u_r[2]) < 0.9:
+            u_n = np.cross(u_r, np.array([0.0, 0.0, 1.0]))
+        else:
+            u_n = np.cross(u_r, np.array([1.0, 0.0, 0.0]))
+        u_n = u_n / np.linalg.norm(u_n)
+    else:
+        u_n = h_vec / h
+    u_t = np.cross(u_n, u_r)
+    Q = np.column_stack((u_r, u_t, u_n))  # ECI from RTN: v_eci = Q @ v_rtn
+    return Q.T  # rows R,T,N so v_rtn = Q.T @ v_eci
+
+
+def vector_eci_to_rtn(vec_eci, basis_rtn):
+    """Transform vector(s) from ECI to RTN. basis_rtn has rows (R, T, N) from eci_to_rtn_basis."""
+    vec_eci = np.asarray(vec_eci, dtype=float)
+    if vec_eci.ndim == 1:
+        return np.dot(basis_rtn, vec_eci)
+    return np.dot(vec_eci, basis_rtn.T)
+
+
+def vector_rtn_to_eci(vec_rtn, basis_rtn):
+    """Transform vector(s) from RTN to ECI. basis_rtn has rows (R, T, N) from eci_to_rtn_basis."""
+    vec_rtn = np.asarray(vec_rtn, dtype=float)
+    if vec_rtn.ndim == 1:
+        return np.dot(basis_rtn.T, vec_rtn)
+    return np.dot(vec_rtn, basis_rtn)
+
+
 def relative_rtn_to_absolute_eci(r_chief, v_chief, constellation_rtn):
     """
     Convert relative RTN state(s) to absolute ECI for a constellation.

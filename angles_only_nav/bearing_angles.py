@@ -12,6 +12,12 @@ import numpy as np
 from typing import Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass, field
 
+from sat.control.rtn_to_eci_propagate import (
+    eci_to_rtn_basis,
+    vector_eci_to_rtn,
+    vector_rtn_to_eci,
+)
+
 
 # -----------------------------------------------------------------------------
 # 1) PIXEL → BEARING (unit line-of-sight in camera frame)
@@ -79,61 +85,9 @@ def pixel_to_bearing(
 
 
 # -----------------------------------------------------------------------------
-# 2) ECI ↔ RTN (Hill frame)
+# 2) ECI ↔ RTN (Hill frame) — uses eci_to_rtn_basis, vector_eci_to_rtn, vector_rtn_to_eci
+#    from sat.control.rtn_to_eci_propagate (see imports at top).
 # -----------------------------------------------------------------------------
-# RTN at observer: R = radial (from Earth outward), T = along-track, N = cross-track.
-#   R = r / |r|
-#   N = (r × v) / |r × v|
-#   T = N × R
-# So R_eci_to_rtn has rows (R, T, N) in ECI components; v_rtn = R_eci_to_rtn @ v_eci.
-# -----------------------------------------------------------------------------
-
-def eci_to_rtn_basis(pos_eci: np.ndarray, vel_eci: np.ndarray) -> np.ndarray:
-    """
-    Compute RTN basis vectors (rows) from observer position and velocity in ECI.
-
-    Parameters
-    ----------
-    pos_eci, vel_eci : ndarray shape (3,)
-        Observer position and velocity in ECI (e.g. km, km/s).
-
-    Returns
-    -------
-    basis_rtn : ndarray shape (3, 3)
-        Rows are R, T, N unit vectors in ECI components. So v_rtn = basis_rtn @ v_eci.
-    """
-    r = np.asarray(pos_eci, dtype=float).ravel()
-    v = np.asarray(vel_eci, dtype=float).ravel()
-    R = r / np.linalg.norm(r)
-    h = np.cross(r, v)
-    hn = np.linalg.norm(h)
-    if hn < 1e-12:
-        # Degenerate: use arbitrary N perpendicular to R
-        if abs(R[2]) < 0.9:
-            N = np.cross(R, np.array([0, 0, 1.0]))
-        else:
-            N = np.cross(R, np.array([1.0, 0, 0]))
-        N = N / np.linalg.norm(N)
-    else:
-        N = h / hn
-    T = np.cross(N, R)
-    return np.stack([R, T, N], axis=0)
-
-
-def vector_eci_to_rtn(vec_eci: np.ndarray, basis_rtn: np.ndarray) -> np.ndarray:
-    """Transform vector(s) from ECI to RTN using precomputed basis (rows R,T,N)."""
-    v = np.asarray(vec_eci, dtype=float)
-    if v.ndim == 1:
-        return np.dot(basis_rtn, v)
-    return np.dot(vec_eci, basis_rtn.T)
-
-
-def vector_rtn_to_eci(vec_rtn: np.ndarray, basis_rtn: np.ndarray) -> np.ndarray:
-    """Transform vector(s) from RTN to ECI (basis rows are R,T,N in ECI)."""
-    v = np.asarray(vec_rtn, dtype=float)
-    if v.ndim == 1:
-        return np.dot(basis_rtn.T, v)
-    return np.dot(vec_rtn, basis_rtn)
 
 
 # -----------------------------------------------------------------------------
