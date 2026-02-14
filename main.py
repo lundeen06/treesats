@@ -202,61 +202,89 @@ def generate_training_data(args):
 
 def run_pipeline(args):
     """
-    Run full pipeline: generate image → autolabel → angles-only nav.
+    Run full pipeline: sequential time-stepping with image → autolabel → angles-only nav.
 
     Parameters:
     -----------
     args : argparse.Namespace
         Command line arguments
     """
-    from sim.star_tracker import render_star_tracker_sequence
+    from sim.star_tracker.star_tracker import render_star_tracker_image
     from sat.control.rtn_to_eci_propagate import eci_to_rtn_basis
-    import matplotlib.pyplot as plt
-    from PIL import Image
 
     print("="*80)
-    print("RUNNING FULL PIPELINE")
+    print("RUNNING FULL PIPELINE (Sequential Time-Stepping)")
     print("="*80)
 
-    # Step 1: Generate simulation
-    print("\n[1/3] Generating simulation...")
+    # Step 1: Propagate all orbits upfront
+    print("\n[1/4] Propagating all satellite orbits...")
     positions, times, constellation = run_simulation(
         n_sats=CONSTELLATION['n_satellites'],
         duration_hours=args.duration,
         dt_seconds=args.dt,
         sat=SATELLITE
     )
+    n_timesteps = len(times)
+    n_satellites = positions.shape[1]
+    observer_index = STAR_TRACKER['observer_index']
 
-    # Step 2: Generate star tracker image
-    print("\n[2/3] Generating star tracker image...")
+    print(f"  Propagated {n_satellites} satellites for {n_timesteps} timesteps")
+    print(f"  Time step: {args.dt}s, Duration: {args.duration*60:.1f} min")
 
-    # Calculate observer velocity for RTN frame
-    observer_pos_km = positions[:, 0, :] / 1000
+    # Step 2: Calculate RTN basis for camera pointing (do this once)
+    print("\n[2/4] Setting up camera pointing (T direction in RTN frame)...")
+    observer_pos_km = positions[:, observer_index, :] / 1000
     dt = times[1] - times[0]
     observer_vel_km_s = np.zeros_like(observer_pos_km)
     observer_vel_km_s[0] = (observer_pos_km[1] - observer_pos_km[0]) / dt
     observer_vel_km_s[-1] = (observer_pos_km[-1] - observer_pos_km[-2]) / dt
     observer_vel_km_s[1:-1] = (observer_pos_km[2:] - observer_pos_km[:-2]) / (2 * dt)
 
-    # Get T direction for camera pointing
+    # Get T direction for camera pointing (tangential direction)
     basis_rtn = eci_to_rtn_basis(observer_pos_km[0], observer_vel_km_s[0])
     t_direction_eci = basis_rtn[1, :]
+    print(f"  Camera boresight: T-direction = {t_direction_eci}")
 
-    # Render images
-    images, visible_sats_list, pixel_coords_list = render_star_tracker_sequence(
-        positions,
-        observer_index=STAR_TRACKER['observer_index'],
-        fov_deg=STAR_TRACKER['fov_deg'],
-        image_size=STAR_TRACKER['image_size'],
-        pointing_direction=t_direction_eci
-    )
+    # Step 3: Sequential time-stepping loop
+    print("\n[3/4] Starting sequential time-stepping loop...")
+    print(f"{'Time':>8} {'Step':>6} {'Visible':>8} {'Status':>20}")
+    print("-" * 50)
 
-    print(f"Generated {len(images)} star tracker images")
-    print(f"Visible satellites per timestep: {[len(v) for v in visible_sats_list[:5]]}...")
+    for t_idx in range(n_timesteps):
+        current_time = times[t_idx]
+        current_positions_m = positions[t_idx]  # Shape: (n_satellites, 3) in meters
+        current_positions_km = current_positions_m / 1000  # Convert to km
 
-    # Step 3: Run autolabeler and angles-only nav
-    print("\n[3/3] Running autolabeler → angles-only nav...")
-    # TODO: Hook up autolabeler and navigation code
+        # Observer position at this timestep
+        observer_pos = current_positions_km[observer_index]
+
+        # Get positions of all other satellites (exclude observer)
+        other_indices = np.arange(n_satellites) != observer_index
+        other_positions = current_positions_km[other_indices]
+
+        # Generate star tracker image for THIS timestep only
+        image, visible_sats, pixel_coords = render_star_tracker_image(
+            observer_pos=observer_pos,
+            satellite_positions=other_positions,
+            fov_deg=STAR_TRACKER['fov_deg'],
+            image_size=STAR_TRACKER['image_size'],
+            pointing_direction=t_direction_eci
+        )
+
+        # TODO: Feed image to autolabeler model
+        # predictions = autolabel_model(image)
+
+        # TODO: Use predictions for angles-only navigation
+        # nav_update = angles_only_nav(predictions, current_state)
+
+        # Progress output (print every 10 timesteps or first/last)
+        if t_idx % 10 == 0 or t_idx == n_timesteps - 1:
+            print(f"{current_time:8.1f}s {t_idx:6d} {len(visible_sats):8d} {'Image generated':>20}")
+
+    # Step 4: Summary
+    print("\n[4/4] Pipeline summary...")
+    print("  → Orbital propagation: ✓ Complete")
+    print("  → Star tracker images: ✓ Generated sequentially")
     print("  → Autolabeler: TODO")
     print("  → Angles-only nav: TODO")
 
