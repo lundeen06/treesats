@@ -1,9 +1,17 @@
 """
 Angles-only navigation: bearing angles, triangulation, and HCW RTN state from images.
 
-CV pipeline output per image: Nx3 array with rows [satellite_ID, x_pixel, y_pixel].
-Uses a sliding window of 3 images: image 1 → bearing, image 2 → depth (triangulation),
-image 3 → velocity (finite difference). Produces HCW state (position, velocity) in RTN.
+Process (summary):
+  1. Image coords (u, v) in [-1, +1]. Origin (0,0) = center; ±1 = edge of FOV.
+  2. FOV = 10° total → ±5° from center. So (u=-1, v=0) = -5° azimuth from center.
+  3. Camera boresight = -T (minus along-track). So center (0,0) is the -T direction;
+     (u=-1, v=0) is -5° in azimuth from -T. Use image_coords_to_bearing(u, v) to get
+     the unit bearing from the camera to that point.
+  4. From there: with 3 images (3 (u,v) at 3 times + observer orbit), triangulation
+     gives depth and finite difference gives velocity → HCW state vector in RTN.
+
+Input: dots as (u,v) in [-1,1] or normalized (u,v). Per image: Nx3 [satellite_ID, u, v].
+Sliding window of 3 images → bearing, depth, velocity → HCW RTN (position, velocity).
 """
 
 from __future__ import annotations
@@ -20,68 +28,223 @@ from sat.control.rtn_to_eci_propagate import (
 
 
 # -----------------------------------------------------------------------------
-# 1) PIXEL → BEARING (unit line-of-sight in camera frame)
+# Sensor FOV and image coordinate system
 # -----------------------------------------------------------------------------
-# Pinhole model: ray through (x_pixel, y_pixel) has direction proportional to
-#   (x_pixel - cx, cy - y_pixel, f)  [image y is down, camera y is up]
-# Unit LOS: ℓ_cam = (dx, dy, f) / sqrt(dx^2 + dy^2 + f^2)
-# where dx = x_pixel - center_x, dy = center_y - y_pixel, f = focal_length_px.
-# Focal length: f = (image_size/2) / tan(half_fov_rad)  (same as star_tracker).
-# -----------------------------------------------------------------------------
-
-def focal_length_px(image_size: int, fov_deg: float) -> float:
-    """Focal length in pixels from image size and full FOV (degrees)."""
-    half_fov_rad = np.radians(fov_deg / 2.0)
-    return (image_size / 2.0) / np.tan(half_fov_rad)
+# Image coords (x_img, y_img): origin at center, extent ±1 in x and y.
+# So x_img, y_img in [-1, 1]; ±1 = edge of FOV. 10° full FOV → half-FOV 5°.
+SENSOR_FOV_DEG = 10.0
+SENSOR_HALF_FOV_DEG = SENSOR_FOV_DEG / 2.0
+MAX_NORMALIZED_UV = float(np.tan(np.radians(SENSOR_HALF_FOV_DEG)))  # ≈ 0.0875 for 10° FOV
+IMAGE_COORD_LIMIT = 1.0  # image x,y in [-1, 1]; ±1 = edge of FOV
 
 
-def pixel_to_bearing(
-    x_pixel: Union[float, np.ndarray],
-    y_pixel: Union[float, np.ndarray],
-    image_size: int,
-    fov_deg: float = 10.0,
-    center_x: Optional[float] = None,
-    center_y: Optional[float] = None,
+def image_coords_to_bearing(
+    x_img: Union[float, np.ndarray],
+    y_img: Union[float, np.ndarray],
+    fov_deg: float = SENSOR_FOV_DEG,
+    clip: bool = True,
 ) -> np.ndarray:
     """
-    Convert pixel coordinates to unit line-of-sight vector in camera frame.
+    Image coords (x_img, y_img) → unit bearing from camera to that point (the dot).
 
-    Camera frame: x = right, y = up, z = forward (boresight).
-    Image: (x_pixel, y_pixel) = (column, row); origin top-left, y down.
+    Convention: image origin at center; x_img, y_img in [-1, 1]. ±1 = edge of FOV.
+    So a dot at (x_img, y_img) gives the bearing from the camera (one point) to the
+    target (the other point). The limit is enforced by clipping to [-1, 1] when clip=True.
 
     Parameters
     ----------
-    x_pixel, y_pixel : float or array
-        Pixel coordinates (column, row). Can be arrays of shape (n,) for multiple points.
-    image_size : int
-        Image width/height in pixels (e.g. 256).
+    x_img, y_img : float or array
+        Image coordinates, range [-1, 1]. +x = right, +y = up (or your image convention).
     fov_deg : float
-        Full field of view in degrees.
-    center_x, center_y : float, optional
-        Principal point. Default: image_size/2.
+        Full FOV in degrees (default 10). Half-FOV used: u = x_img * tan(half), v = y_img * tan(half).
+    clip : bool
+        If True (default), clip x_img, y_img to [-1, 1] before converting.
 
     Returns
     -------
-    los_cam : ndarray
-        Unit vector(s) in camera frame, shape (3,) or (n, 3). Each row is (x_cam, y_cam, z_cam).
+    b : ndarray
+        Unit bearing vector(s) in camera frame: direction from camera to the dot. Shape (3,) or (n, 3).
     """
-    cx = image_size / 2.0 if center_x is None else center_x
-    cy = image_size / 2.0 if center_y is None else center_y
-    f = focal_length_px(image_size, fov_deg)
+    x_img = np.asarray(x_img, dtype=float)
+    y_img = np.asarray(y_img, dtype=float)
+    if clip:
+        x_img = np.clip(x_img, -IMAGE_COORD_LIMIT, IMAGE_COORD_LIMIT)
+        y_img = np.clip(y_img, -IMAGE_COORD_LIMIT, IMAGE_COORD_LIMIT)
+    half_rad = np.radians(fov_deg / 2.0)
+    max_uv = float(np.tan(half_rad))
+    u = np.asarray(x_img, dtype=float) * max_uv
+    v = np.asarray(y_img, dtype=float) * max_uv
+    return normalized_plane_to_bearing(u, v)
 
-    x = np.atleast_1d(np.asarray(x_pixel, dtype=float))
-    y = np.atleast_1d(np.asarray(y_pixel, dtype=float))
-    dx = x - cx
-    dy = cy - y  # image y down → camera y up
 
-    # Unnormalized ray: (dx, dy, f)
-    z = np.full_like(dx, f)
-    ray = np.stack([dx, dy, z], axis=-1)
+def image_coords_to_uv(
+    x_img: Union[float, np.ndarray],
+    y_img: Union[float, np.ndarray],
+    fov_deg: float = SENSOR_FOV_DEG,
+    clip: bool = True,
+) -> Tuple[Union[float, np.ndarray], Union[float, np.ndarray]]:
+    """
+    Image coords [-1, 1] → (u, v) on normalized plane for use in pipelines expecting [sat_id, u, v].
+
+    Same mapping as image_coords_to_bearing: u = x_img * tan(half_fov), v = y_img * tan(half_fov).
+    Returns (u, v) so you can build detections as np.array([[sat_id, u, v], ...]).
+    """
+    x_img = np.asarray(x_img, dtype=float)
+    y_img = np.asarray(y_img, dtype=float)
+    if clip:
+        x_img = np.clip(x_img, -IMAGE_COORD_LIMIT, IMAGE_COORD_LIMIT)
+        y_img = np.clip(y_img, -IMAGE_COORD_LIMIT, IMAGE_COORD_LIMIT)
+    half_rad = np.radians(fov_deg / 2.0)
+    max_uv = float(np.tan(half_rad))
+    u = x_img * max_uv
+    v = y_img * max_uv
+    return (u, v) if u.shape != () else (float(u), float(v))
+
+
+def image_coords_in_fov(
+    x_img: Union[float, np.ndarray],
+    y_img: Union[float, np.ndarray],
+    limit: float = IMAGE_COORD_LIMIT,
+) -> Union[bool, np.ndarray]:
+    """True if (x_img, y_img) is inside the image / FOV (|x|, |y| ≤ limit). Default limit=1."""
+    x_img = np.asarray(x_img)
+    y_img = np.asarray(y_img)
+    ok = (np.abs(x_img) <= limit) & (np.abs(y_img) <= limit)
+    return bool(ok) if np.isscalar(x_img) else ok
+
+
+def uv_in_fov(
+    u: Union[float, np.ndarray],
+    v: Union[float, np.ndarray],
+    max_uv: float = MAX_NORMALIZED_UV,
+) -> Union[bool, np.ndarray]:
+    """
+    True if (u,v) lies inside the sensor FOV (square: |u|,|v| ≤ max_uv).
+
+    max_uv = tan(half_FOV_rad). Default uses SENSOR_FOV_DEG (10°).
+    """
+    u, v = np.asarray(u), np.asarray(v)
+    ok = (np.abs(u) <= max_uv) & (np.abs(v) <= max_uv)
+    return bool(ok) if np.isscalar(u) else ok
+
+
+def clip_uv_to_fov(
+    u: Union[float, np.ndarray],
+    v: Union[float, np.ndarray],
+    max_uv: float = MAX_NORMALIZED_UV,
+) -> Tuple[Union[float, np.ndarray], Union[float, np.ndarray]]:
+    """Clip (u,v) to the sensor FOV square. Returns (u_clipped, v_clipped)."""
+    u = np.clip(np.asarray(u, dtype=float), -max_uv, max_uv)
+    v = np.clip(np.asarray(v, dtype=float), -max_uv, max_uv)
+    return (u, v) if u.shape != () else (float(u), float(v))
+
+
+# -----------------------------------------------------------------------------
+# 1) BEARING = UNIT VECTOR (camera frame, optical axis +z)
+# -----------------------------------------------------------------------------
+# (u, v) on normalized plane → b = (u, v, 1) / sqrt(u^2 + v^2 + 1). No intrinsics.
+#
+# (u,v) coordinate system:
+#   - Origin (0, 0) = boresight (optical axis, center of "image").
+#   - u = tangent of angle in x (right); v = tangent of angle in y (up).
+#   - With SENSOR_FOV_DEG = 10: |u|, |v| ≤ MAX_NORMALIZED_UV ≈ 0.0875.
+# -----------------------------------------------------------------------------
+
+def normalized_plane_to_bearing(
+    u: Union[float, np.ndarray],
+    v: Union[float, np.ndarray],
+) -> np.ndarray:
+    """
+    (u, v) on normalized plane → unit bearing in camera frame.
+
+    Optical axis +z. Formula: b = (u, v, 1) / sqrt(u^2 + v^2 + 1).
+
+    Parameters
+    ----------
+    u, v : float or array
+        Coordinates on normalized plane. Shape (n,) for multiple points.
+
+    Returns
+    -------
+    b : ndarray
+        Unit vector(s) in camera frame, shape (3,) or (n, 3). Each row (b_x, b_y, b_z).
+    """
+    u = np.atleast_1d(np.asarray(u, dtype=float))
+    v = np.atleast_1d(np.asarray(v, dtype=float))
+    one = np.ones_like(u)
+    ray = np.stack([u, v, one], axis=-1)
     nrm = np.linalg.norm(ray, axis=-1, keepdims=True)
     nrm = np.where(nrm > 0, nrm, 1.0)
-    los_cam = ray / nrm
+    b = ray / nrm
+    return b.squeeze() if b.shape[0] == 1 else b
 
-    return los_cam.squeeze() if los_cam.shape[0] == 1 else los_cam
+
+def bearing_to_angles(
+    b: np.ndarray,
+    convention: str = "azimuth_elevation",
+) -> Union[Tuple[float, float], np.ndarray]:
+    """
+    Unit bearing vector → angles (for display or legacy interfaces).
+
+    Estimator should keep unit vectors; angles have singularities. Optical axis +z.
+
+    Conventions:
+      - "azimuth_elevation": theta = arctan2(b_x, b_z), phi = arctan2(b_y, b_z)
+      - "spherical": alpha = arctan2(b_y, b_x), beta = arccos(b_z) (inclination from +z)
+
+    Parameters
+    ----------
+    b : ndarray shape (3,) or (n, 3)
+        Unit bearing vector(s) in camera frame.
+    convention : str
+        "azimuth_elevation" or "spherical".
+
+    Returns
+    -------
+    angles : (theta, phi) or (alpha, beta) in radians, or (n, 2) array.
+    """
+    b = np.asarray(b, dtype=float)
+    single = b.ndim == 1
+    if single:
+        b = b.reshape(1, 3)
+    if convention == "azimuth_elevation":
+        theta = np.arctan2(b[:, 0], b[:, 2])
+        phi = np.arctan2(b[:, 1], b[:, 2])
+        out = np.column_stack([theta, phi])
+    else:
+        alpha = np.arctan2(b[:, 1], b[:, 0])
+        beta = np.arccos(np.clip(b[:, 2], -1.0, 1.0))
+        out = np.column_stack([alpha, beta])
+    return (out[0, 0], out[0, 1]) if single else out
+
+
+def angles_to_bearing(
+    theta: Union[float, np.ndarray],
+    phi: Union[float, np.ndarray],
+    convention: str = "azimuth_elevation",
+) -> np.ndarray:
+    """
+    Angles → unit bearing in camera frame (optical axis +z).
+
+    "azimuth_elevation": b_z = 1/sqrt(1 + tan^2(theta) + tan^2(phi)), b_x = tan(theta)*b_z, b_y = tan(phi)*b_z.
+    "spherical": alpha, beta → b = (sin(beta)*cos(alpha), sin(beta)*sin(alpha), cos(beta)).
+    """
+    theta = np.atleast_1d(np.asarray(theta, dtype=float))
+    phi = np.atleast_1d(np.asarray(phi, dtype=float))
+    if convention == "spherical":
+        ct, st = np.cos(theta), np.sin(theta)
+        cp, sp = np.cos(phi), np.sin(phi)
+        b = np.stack([st * cp, st * sp, ct], axis=-1)
+    else:
+        bz = 1.0 / np.sqrt(1.0 + np.tan(theta) ** 2 + np.tan(phi) ** 2)
+        bz = np.where(np.isfinite(bz), bz, 0.0)
+        bx = np.tan(theta) * bz
+        by = np.tan(phi) * bz
+        b = np.stack([bx, by, bz], axis=-1)
+    nrm = np.linalg.norm(b, axis=-1, keepdims=True)
+    nrm = np.where(nrm > 0, nrm, 1.0)
+    b = b / nrm
+    return b.squeeze() if b.shape[0] == 1 else b
 
 
 # -----------------------------------------------------------------------------
@@ -187,16 +350,42 @@ def relative_position_rtn_at_t(
     return vector_eci_to_rtn(rel_eci, basis)
 
 
+def rtn_position_to_predicted_image_coords(
+    r_rtn: np.ndarray,
+    observer_pos_eci: np.ndarray,
+    observer_vel_eci: np.ndarray,
+    R_cam_to_eci: np.ndarray,
+    fov_deg: float = SENSOR_FOV_DEG,
+) -> Tuple[float, float]:
+    """
+    From relative position in RTN, compute predicted (u_img, v_img) in [-1, 1] as seen by the camera.
+
+    rel_eci = vector_rtn_to_eci(r_rtn), los = rel_eci/|rel_eci|, los_cam = R_cam_to_eci.T @ los,
+    then u_img = (los_cam_x / los_cam_z) / tan(half_fov), same for v_img.
+    """
+    basis = eci_to_rtn_basis(observer_pos_eci, observer_vel_eci)
+    rel_eci = vector_rtn_to_eci(r_rtn, basis)
+    nrm = np.linalg.norm(rel_eci)
+    if nrm < 1e-12:
+        return 0.0, 0.0
+    los_eci = rel_eci / nrm
+    los_cam = np.dot(np.asarray(R_cam_to_eci, dtype=float).T, los_eci)
+    if abs(los_cam[2]) < 1e-12:
+        return 0.0, 0.0
+    u_norm = los_cam[0] / los_cam[2]
+    v_norm = los_cam[1] / los_cam[2]
+    half_fov_rad = np.radians(fov_deg / 2.0)
+    max_uv = np.tan(half_fov_rad)
+    u_img = u_norm / max_uv
+    v_img = v_norm / max_uv
+    return float(u_img), float(v_img)
+
+
 # -----------------------------------------------------------------------------
-# 5) THREE-FRAME STATE: positions at t1,t2,t3 and velocity at t2
+# 5) THREE-FRAME STATE: position and velocity at middle or latest image
 # -----------------------------------------------------------------------------
-# For each satellite we have 3 unit LOS in ECI and 3 observer states.
-# Triangulate (1,2) to get ρ1, ρ2; (2,3) to get ρ2b, ρ3; (1,3) to get ρ1c, ρ3c.
-# We use pairs (1,2) and (2,3) to get ranges at t1, t2, t3:
-#   ρ1 from (los1, los2, O1, O2), then r1_rtn = rel_pos_rtn(ρ1, los1, O1, v1).
-#   ρ2 from (los1, los2, O1, O2) gives ρ' at O2; or use (los2, los3, O2, O3) for ρ2.
-#   ρ3 from (los2, los3, O2, O3).
-# Then velocity at t2: v_rtn ≈ (r3_rtn - r1_rtn) / (t3 - t1).
+# output_at="latest" (default): state at t3 (most recent image). Use for sliding window.
+# output_at="middle": state at t2.
 # -----------------------------------------------------------------------------
 
 def three_frame_rtn_state(
@@ -208,30 +397,24 @@ def three_frame_rtn_state(
     t1: float,
     t2: float,
     t3: float,
+    output_at: str = "latest",
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Compute relative position (RTN) at t2 and velocity (RTN) at t2 from 3 bearings and observer orbit.
+    Compute relative position (RTN) and velocity (RTN) from 3 bearings and observer orbit.
 
-    Parameters
-    ----------
-    los1_eci, los2_eci, los3_eci : ndarray (3,)
-        Unit line-of-sight in ECI at t1, t2, t3.
-    obs_pos_eci : ndarray (3, 3)
-        Observer position in ECI at t1, t2, t3 (rows).
-    obs_vel_eci : ndarray (3, 3)
-        Observer velocity in ECI at t1, t2, t3 (rows).
-    t1, t2, t3 : float
-        Timestamps (e.g. seconds).
+    output_at="latest" (default): position and velocity at t3 (third / most recent image).
+    output_at="middle": position and velocity at t2.
 
     Returns
     -------
-    r_rtn : ndarray (3,) position in RTN at t2 (km)
-    v_rtn : ndarray (3,) velocity in RTN at t2 (km/s)
+    r_rtn : ndarray (3,) position in RTN (km)
+    v_rtn : ndarray (3,) velocity in RTN (km/s)
     """
     O1 = obs_pos_eci[0]
     O2 = obs_pos_eci[1]
     O3 = obs_pos_eci[2]
     v2 = obs_vel_eci[1]
+    v3 = obs_vel_eci[2]
 
     rho1, _ = triangulate_range(los1_eci, los2_eci, O1, O2)
     _, rho2_from_12 = triangulate_range(los1_eci, los2_eci, O1, O2)
@@ -240,43 +423,84 @@ def three_frame_rtn_state(
     if np.isnan(rho1) or np.isnan(rho3):
         return np.full(3, np.nan), np.full(3, np.nan)
 
-    # Prefer range at t2 from average of both triangulations if both valid
     rho2 = rho2_from_12 if not np.isnan(rho2_from_12) else rho2_from_23
     if not np.isnan(rho2_from_23) and not np.isnan(rho2_from_12):
         rho2 = 0.5 * (rho2_from_12 + rho2_from_23)
 
-    r1_rtn = relative_position_rtn_at_t(rho1, los1_eci, O1, obs_vel_eci[0])
-    r2_rtn = relative_position_rtn_at_t(rho2, los2_eci, O2, v2)
-    r3_rtn = relative_position_rtn_at_t(rho3, los3_eci, O3, obs_vel_eci[2])
+    rel1_eci = rho1 * np.asarray(los1_eci, dtype=float).ravel()
+    rel2_eci = rho2 * np.asarray(los2_eci, dtype=float).ravel()
+    rel3_eci = rho3 * np.asarray(los3_eci, dtype=float).ravel()
 
-    dt = t3 - t1
-    if dt <= 0:
-        v_rtn = np.zeros(3)
+    if output_at == "latest":
+        r_rtn = relative_position_rtn_at_t(rho3, los3_eci, O3, v3)
+        dt_vel = t3 - t2
+        if dt_vel <= 0:
+            v_rtn = np.zeros(3)
+        else:
+            v_rel_eci = (rel3_eci - rel2_eci) / dt_vel
+            r_mag_sq = np.dot(O3, O3)
+            h_vec = np.cross(O3, v3)
+            omega_eci = h_vec / r_mag_sq
+            v_rel_eci_minus_omega_r = v_rel_eci - np.cross(omega_eci, rel3_eci)
+            basis3 = eci_to_rtn_basis(O3, v3)
+            v_rtn = vector_eci_to_rtn(v_rel_eci_minus_omega_r, basis3)
     else:
-        v_rtn = (r3_rtn - r1_rtn) / dt
+        r_rtn = relative_position_rtn_at_t(rho2, los2_eci, O2, v2)
+        dt = t3 - t1
+        if dt <= 0:
+            v_rtn = np.zeros(3)
+        else:
+            v_rel_eci = (rel3_eci - rel1_eci) / dt
+            r_mag_sq = np.dot(O2, O2)
+            h_vec = np.cross(O2, v2)
+            omega_eci = h_vec / r_mag_sq
+            v_rel_eci_minus_omega_r = v_rel_eci - np.cross(omega_eci, rel2_eci)
+            basis2 = eci_to_rtn_basis(O2, v2)
+            v_rtn = vector_eci_to_rtn(v_rel_eci_minus_omega_r, basis2)
 
-    return r2_rtn, v_rtn
+    return r_rtn, v_rtn
+
+
+def three_frame_rtn_positions(
+    los1_eci: np.ndarray,
+    los2_eci: np.ndarray,
+    los3_eci: np.ndarray,
+    obs_pos_eci: np.ndarray,
+    obs_vel_eci: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Triangulate and return relative position in RTN at t1, t2, t3.
+    Returns (r1_rtn, r2_rtn, r3_rtn). Use with rtn_position_to_predicted_image_coords for plotting.
+    """
+    O1, O2, O3 = obs_pos_eci[0], obs_pos_eci[1], obs_pos_eci[2]
+    rho1, _ = triangulate_range(los1_eci, los2_eci, O1, O2)
+    _, rho2_from_12 = triangulate_range(los1_eci, los2_eci, O1, O2)
+    rho2_from_23, rho3 = triangulate_range(los2_eci, los3_eci, O2, O3)
+    if np.isnan(rho1) or np.isnan(rho3):
+        return np.full(3, np.nan), np.full(3, np.nan), np.full(3, np.nan)
+    rho2 = rho2_from_12 if not np.isnan(rho2_from_12) else rho2_from_23
+    if not np.isnan(rho2_from_23) and not np.isnan(rho2_from_12):
+        rho2 = 0.5 * (rho2_from_12 + rho2_from_23)
+    r1_rtn = relative_position_rtn_at_t(rho1, los1_eci, O1, obs_vel_eci[0])
+    r2_rtn = relative_position_rtn_at_t(rho2, los2_eci, O2, obs_vel_eci[1])
+    r3_rtn = relative_position_rtn_at_t(rho3, los3_eci, O3, obs_vel_eci[2])
+    return r1_rtn, r2_rtn, r3_rtn
 
 
 # -----------------------------------------------------------------------------
 # 6) DETECTION MATRICES AND FRAME PROCESSING
 # -----------------------------------------------------------------------------
-# Each frame: detections = Nx3 array, rows [sat_id, x_pixel, y_pixel].
-# We need to build LOS in ECI for each (sat_id, frame_idx) and observer orbit.
+# Each frame: detections = Nx3 array, rows [sat_id, u, v] on normalized plane.
 # -----------------------------------------------------------------------------
 
 def detections_to_los_eci_per_sat(
     frame_detections: List[np.ndarray],
-    image_size: int,
-    fov_deg: float,
     R_cam_to_eci_per_frame: List[np.ndarray],
 ) -> Dict[int, List[np.ndarray]]:
     """
-    For each satellite ID present in any frame, build list of (frame_index, los_eci) for frames where it appears.
+    For each satellite ID present in any frame, build list of (frame_index, los_eci).
 
-    frame_detections[i] = Nx3 array [sat_id, x_pixel, y_pixel].
-    R_cam_to_eci_per_frame[i] = 3x3 rotation at frame i.
-    Returns dict: sat_id -> list of (frame_idx, los_eci) in order of frame index.
+    frame_detections[i] = Nx3 array [sat_id, u, v]. (u, v) are on the normalized plane.
     """
     sat_to_frames: Dict[int, List[Tuple[int, np.ndarray]]] = {}
     for fi, det in enumerate(frame_detections):
@@ -285,8 +509,8 @@ def detections_to_los_eci_per_sat(
         R = R_cam_to_eci_per_frame[fi]
         for row in det:
             sid = int(row[0])
-            xp, yp = float(row[1]), float(row[2])
-            los_cam = pixel_to_bearing(xp, yp, image_size, fov_deg)
+            u, v = float(row[1]), float(row[2])
+            los_cam = normalized_plane_to_bearing(u, v)
             los_eci = los_cam_to_eci(los_cam, R)
             if sid not in sat_to_frames:
                 sat_to_frames[sid] = []
@@ -301,10 +525,12 @@ def compute_rtn_state_for_sat(
     obs_pos_eci: np.ndarray,
     obs_vel_eci: np.ndarray,
     times: np.ndarray,
+    output_at: str = "latest",
 ) -> Optional[Tuple[np.ndarray, np.ndarray]]:
     """
     Compute RTN position and velocity for one satellite from 3 consecutive frames.
 
+    output_at="latest": state at third (most recent) frame; "middle": at second frame.
     frame_indices and los_eci_list must have length 3; obs_pos_eci and obs_vel_eci shape (3,3); times length 3.
     """
     if len(frame_indices) != 3 or len(los_eci_list) != 3:
@@ -314,6 +540,7 @@ def compute_rtn_state_for_sat(
         los_eci_list[0], los_eci_list[1], los_eci_list[2],
         obs_pos_eci, obs_vel_eci,
         times[i1], times[i2], times[i3],
+        output_at=output_at,
     )
     if np.any(np.isnan(r_rtn)):
         return None
@@ -326,7 +553,7 @@ def compute_rtn_state_for_sat(
 
 @dataclass
 class FrameInput:
-    """Single frame: detections Nx3 [sat_id, x_pixel, y_pixel], timestamp, observer state in ECI."""
+    """Single frame: detections Nx3 [sat_id, u, v] (normalized plane), timestamp, observer state in ECI."""
     detections: np.ndarray  # (N, 3)
     timestamp: float
     observer_pos_eci: np.ndarray  # (3,)
@@ -345,17 +572,14 @@ class RTNState:
 class SlidingFilter:
     """
     Keeps the latest 3 frames. For each satellite ID that appears in all 3,
-    computes HCW RTN (position, velocity). Adds new IDs when they get 3 frames;
-    drops IDs that no longer appear in the latest 3.
+    computes HCW RTN (position, velocity) at the latest image time.
+    Adds new IDs when they get 3 frames; drops IDs that no longer appear in the latest 3.
+
+    After each push(), .states is dict[sat_id -> RTNState] and .sat_ids is the list of
+    all sat IDs that currently have an estimate (visible in the latest 3 frames).
     """
 
-    def __init__(
-        self,
-        image_size: int = 256,
-        fov_deg: float = 10.0,
-    ):
-        self.image_size = image_size
-        self.fov_deg = fov_deg
+    def __init__(self) -> None:
         self._frames: List[FrameInput] = []
         self._max_frames = 3
         self._states: Dict[int, RTNState] = {}
@@ -369,8 +593,9 @@ class SlidingFilter:
         R_cam_to_eci: np.ndarray,
     ) -> Dict[int, RTNState]:
         """
-        Append a new frame. If we have 3 frames, compute RTN for all sats visible in all 3;
-        update running list (add new, remove missing). Returns current state dict.
+        Append a new frame. If we have 3 frames, compute RTN for all sats visible in all 3
+        at the latest image time; update running list (add new, remove missing).
+        Returns current state dict (keys = all current sat IDs). Use .sat_ids for the list.
         """
         self._frames.append(FrameInput(
             detections=np.asarray(detections) if detections is not None and len(detections) else np.empty((0, 3)),
@@ -391,9 +616,7 @@ class SlidingFilter:
 
         frame_detections = [f.detections for f in self._frames]
         R_per_frame = [f.R_cam_to_eci for f in self._frames]
-        los_per_sat = detections_to_los_eci_per_sat(
-            frame_detections, self.image_size, self.fov_deg, R_per_frame,
-        )
+        los_per_sat = detections_to_los_eci_per_sat(frame_detections, R_per_frame)
 
         obs_pos = np.stack([f.observer_pos_eci for f in self._frames], axis=0)
         obs_vel = np.stack([f.observer_vel_eci for f in self._frames], axis=0)
@@ -416,11 +639,11 @@ class SlidingFilter:
             )
             if out is not None:
                 r_rtn, v_rtn = out
-                t_mid = times[1]
+                t_latest = times[2]  # state is at latest (third) image
                 self._states[sat_id] = RTNState(
                     position_rtn=r_rtn,
                     velocity_rtn=v_rtn,
-                    timestamp=t_mid,
+                    timestamp=t_latest,
                 )
                 current_ids.add(sat_id)
 
@@ -434,8 +657,115 @@ class SlidingFilter:
         """Current RTN state per satellite ID."""
         return dict(self._states)
 
+    @property
+    def sat_ids(self) -> List[int]:
+        """All satellite IDs that currently have an HCW state (visible in the latest 3 frames)."""
+        return sorted(self._states.keys())
+
     def get_state(self, sat_id: int) -> Optional[RTNState]:
         return self._states.get(sat_id)
+
+
+def compute_hcw_vectors_from_three_frames(
+    frame1: np.ndarray,
+    frame2: np.ndarray,
+    frame3: np.ndarray,
+    t1: float,
+    t2: float,
+    t3: float,
+    observer_pos_eci: np.ndarray,
+    observer_vel_eci: np.ndarray,
+    R_cam_to_eci_per_frame: Optional[List[np.ndarray]] = None,
+    use_image_coords: bool = False,
+    fov_deg: float = SENSOR_FOV_DEG,
+    return_array: bool = False,
+) -> Union[Dict[int, np.ndarray], Tuple[Dict[int, np.ndarray], np.ndarray, np.ndarray]]:
+    """
+    Run the 3-frame pipeline and return HCW 6-vectors per sat ID.
+    State (position and velocity) is at the latest image time (t3).
+
+    Parameters
+    ----------
+    frame1, frame2, frame3 : ndarray shape (N, 3)
+        Each row is [sat_id, u, v]. (u, v) are on the normalized plane unless use_image_coords=True.
+    t1, t2, t3 : float
+        Timestamps (e.g. seconds).
+    observer_pos_eci : ndarray shape (3, 3)
+        Observer position in ECI at t1, t2, t3 (rows).
+    observer_vel_eci : ndarray shape (3, 3)
+        Observer velocity in ECI at t1, t2, t3 (rows).
+    R_cam_to_eci_per_frame : list of 3 ndarrays (3, 3), optional
+        Camera-to-ECI rotation at each time. If None, uses camera_rotation_from_observer_eci.
+    use_image_coords : bool
+        If True, (u, v) in frames are image coords in [-1, 1]; converted via image_coords_to_uv.
+    fov_deg : float
+        Used only when use_image_coords=True.
+    return_array : bool
+        If True, also return (sat_ids, hcw_array) where hcw_array is (n_sats, 6) in same order.
+
+    Returns
+    -------
+    hcw_by_id : dict
+        sat_id -> ndarray (6,) [R, T, N, R_dot, T_dot, N_dot] in km and km/s.
+    If return_array=True: (hcw_by_id, sat_ids, hcw_array) with hcw_array shape (n_sats, 6).
+
+    Example
+    -------
+    >>> frame1 = np.array([[1, 0.1, 0], [2, -0.2, 0.1]])   # sat 1 and 2, (u,v)
+    >>> frame2 = np.array([[1, 0.12, 0], [2, -0.18, 0.12]])
+    >>> frame3 = np.array([[1, 0.14, 0], [2, -0.16, 0.14]])
+    >>> obs_pos = np.stack([pos_t1, pos_t2, pos_t3])   # (3, 3) ECI km
+    >>> obs_vel = np.stack([vel_t1, vel_t2, vel_t3])   # (3, 3) ECI km/s
+    >>> hcw_by_id = compute_hcw_vectors_from_three_frames(
+    ...     frame1, frame2, frame3, t1, t2, t3, obs_pos, obs_vel
+    ... )
+    >>> hcw_by_id[1]   # 6-vector [R, T, N, R_dot, T_dot, N_dot] for sat 1
+    >>> # Optional: get array (n_sats, 6) with sorted sat IDs:
+    >>> hcw_by_id, sat_ids, hcw_array = compute_hcw_vectors_from_three_frames(
+    ...     frame1, frame2, frame3, t1, t2, t3, obs_pos, obs_vel, return_array=True
+    ... )
+    """
+    obs_pos = np.asarray(observer_pos_eci, dtype=float).reshape(3, 3)
+    obs_vel = np.asarray(observer_vel_eci, dtype=float).reshape(3, 3)
+
+    if R_cam_to_eci_per_frame is None:
+        R_cam_to_eci_per_frame = [
+            camera_rotation_from_observer_eci(obs_pos[i], obs_vel[i])
+            for i in range(3)
+        ]
+
+    def _prepare_frame(frame: np.ndarray) -> np.ndarray:
+        out = np.asarray(frame, dtype=float)
+        if out.ndim == 1:
+            out = out.reshape(1, -1)
+        if use_image_coords and out.size > 0:
+            rows = []
+            for row in out:
+                sid, u, v = row[0], row[1], row[2]
+                u_plane, v_plane = image_coords_to_uv(u, v, fov_deg=fov_deg, clip=True)
+                rows.append([sid, u_plane, v_plane])
+            out = np.array(rows, dtype=float)
+        return out
+
+    f1 = _prepare_frame(frame1)
+    f2 = _prepare_frame(frame2)
+    f3 = _prepare_frame(frame3)
+
+    flt = SlidingFilter()
+    flt.push(f1, t1, obs_pos[0], obs_vel[0], R_cam_to_eci_per_frame[0])
+    flt.push(f2, t2, obs_pos[1], obs_vel[1], R_cam_to_eci_per_frame[1])
+    states = flt.push(f3, t3, obs_pos[2], obs_vel[2], R_cam_to_eci_per_frame[2])
+
+    hcw_by_id: Dict[int, np.ndarray] = {}
+    for sid, s in states.items():
+        hcw_by_id[sid] = np.concatenate([s.position_rtn, s.velocity_rtn])
+
+    if not return_array:
+        return hcw_by_id
+
+    sat_ids = sorted(hcw_by_id.keys())
+    hcw_array = np.array([hcw_by_id[sid] for sid in sat_ids], dtype=float)
+    return hcw_by_id, np.array(sat_ids), hcw_array
 
 
 # -----------------------------------------------------------------------------
@@ -445,15 +775,26 @@ class SlidingFilter:
 def camera_rotation_from_observer_eci(
     observer_pos_eci: np.ndarray,
     observer_vel_eci: np.ndarray,
-    boresight_along: str = "velocity",
+    boresight_along: str = "minus_T",
 ) -> np.ndarray:
     """
-    Default camera: boresight along velocity (along-track), up along radial (R).
-    So in RTN: camera z = T, camera y = R, camera x = -N. Then convert RTN to ECI.
+    Camera frame to ECI. Columns = (cam_x, cam_y, cam_z) in ECI.
+
+    Default: boresight = -T (camera points opposite to velocity / minus along-track).
+    So (u=0, v=0) is along -T; (u=-1, v=0) is -5° azimuth from -T (10° FOV, ±5°).
+
+    Options:
+      "minus_T" or "-T" : cam_z = -T (boresight backward along-track), cam_y = R, cam_x = N.
+      "T" or "velocity" : cam_z = +T (boresight forward), cam_y = R, cam_x = -N.
+      "R" : cam_z = R (boresight radial), cam_y = N, cam_x = T.
     """
     basis = eci_to_rtn_basis(observer_pos_eci, observer_vel_eci)
     R, T, N = basis[0], basis[1], basis[2]
-    if boresight_along == "velocity" or boresight_along == "T":
+    if boresight_along in ("minus_T", "-T"):
+        cam_z_eci = -T
+        cam_y_eci = R
+        cam_x_eci = N
+    elif boresight_along in ("velocity", "T"):
         cam_z_eci = T
         cam_y_eci = R
         cam_x_eci = -N
