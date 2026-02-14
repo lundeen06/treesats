@@ -1,0 +1,17 @@
+# Satellite Detection Dataset Configuration
+# For 250x250 space images with dot-like satellites/debris
+
+# Dataset root directory (relative to train.py location)
+path: ./data
+
+# Train/val/test image directories (relative to path)
+train: images/train
+val: images/val
+test: images/test
+
+# Class definitions
+names:
+  0: satellite
+  1: debris
+
+nc: 2
