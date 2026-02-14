@@ -2,3 +2,4 @@ tensorgator
 numpy
 matplotlib
 tqdm
+opencv-python

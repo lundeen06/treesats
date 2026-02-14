@@ -252,13 +252,35 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
     from PIL import Image
     import os
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+    from sat.control.rtn_to_eci_propagate import eci_to_rtn_basis
 
-    # Render image sequence
+    # Calculate observer velocity for RTN frame (using finite difference)
+    # Positions are in meters, convert to km for RTN calculation
+    observer_pos_km = positions[:, 0, :] / 1000  # Shape: (n_timesteps, 3)
+
+    # Calculate velocity using central differences
+    dt = times[1] - times[0]  # timestep in seconds
+    observer_vel_km_s = np.zeros_like(observer_pos_km)
+    observer_vel_km_s[0] = (observer_pos_km[1] - observer_pos_km[0]) / dt
+    observer_vel_km_s[-1] = (observer_pos_km[-1] - observer_pos_km[-2]) / dt
+    observer_vel_km_s[1:-1] = (observer_pos_km[2:] - observer_pos_km[:-2]) / (2 * dt)
+
+    # Get RTN basis at first timestep to determine T direction
+    basis_rtn = eci_to_rtn_basis(observer_pos_km[0], observer_vel_km_s[0])
+    # basis_rtn has rows [R, T, N], so T direction is row 1
+    t_direction_eci = basis_rtn[1, :]  # Tangential (along-track) direction in ECI
+
+    print(f"Star tracker pointing in T (tangential) direction: {t_direction_eci}")
+
+    # Render image sequence with T-direction pointing
     images, visible_sats_list, pixel_coords_list = render_star_tracker_sequence(
         positions,
         observer_index=0,
         fov_deg=15.0,
-        image_size=256
+        image_size=256,
+        pointing_direction=t_direction_eci
     )
 
     print(f"Star tracker images rendered:")
@@ -279,6 +301,32 @@ if __name__ == "__main__":
         img.save(img_path)
 
     print(f"Saved {len(images)} raw star tracker images (256x256 pixels)")
+
+    # Generate MP4 video from star tracker images
+    print(f"\nGenerating MP4 video from star tracker sequence...")
+    try:
+        import cv2
+
+        # Video parameters
+        fps = int(1 / args.dt)  # Frame rate matches simulation timestep (e.g., 1/5 = 0.2 fps for 5s timesteps)
+        # For faster playback, use a higher fps
+        video_fps = max(10, fps)  # At least 10 fps for smooth playback
+
+        video_path = os.path.join(output_dir, 'star_tracker_sequence.mp4')
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        video_writer = cv2.VideoWriter(video_path, fourcc, video_fps, (256, 256), isColor=False)
+
+        for img_array in images:
+            # Convert to 8-bit grayscale (0-255)
+            img_uint8 = (img_array * 255).astype(np.uint8)
+            video_writer.write(img_uint8)
+
+        video_writer.release()
+        print(f"Star tracker MP4 saved to: {video_path}")
+        print(f"  Duration: {len(images)/video_fps:.1f} seconds at {video_fps} fps")
+    except ImportError:
+        print("Warning: opencv-python not installed. Skipping MP4 generation.")
+        print("Install with: pip install opencv-python")
 
     # Visualize if requested
     if args.visualize:
@@ -322,7 +370,7 @@ if __name__ == "__main__":
             axes[i].set_title(f't={i} ({len(visible_sats_list[i])} sats)')
             axes[i].axis('off')
 
-        plt.suptitle('Star Tracker Image Sequence (Camera pointing in +x_eci)', fontsize=14)
+        plt.suptitle('Star Tracker Image Sequence (Camera pointing in T direction)', fontsize=14)
         plt.tight_layout()
 
         tracker_save_path = os.path.join(output_dir, 'star_tracker_sequence.png')
