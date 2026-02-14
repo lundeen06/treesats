@@ -198,7 +198,7 @@ def plot_orbits_static(positions, save_path=None, title=None, max_satellites=Non
         if len(visible_other_pos) > 0:
             ax.scatter(visible_other_pos[:, 0], visible_other_pos[:, 1], visible_other_pos[:, 2],
                       c='white', s=5, marker='.', alpha=0.5, linewidths=0,
-                      label=f'Other satellites ({len(visible_other_pos)})')
+                      label=f'Other satellites')
 
     # Satellite 0 with short trail - only if visible
     sat0_visible = is_visible_from_view(np.array([last_pos[0]]), elev, azim, earth_radius_km)[0]
