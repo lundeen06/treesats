@@ -18,7 +18,7 @@ Usage:
 """
 
 from .train import train
-from .inference import load_model, detect, detect_single, track
+from .inference import load_model, detect, detect_single, track, track_and_save
 from .prepare_data import (
     CLASSES,
     CLASS_NAMES,
@@ -43,6 +43,7 @@ __all__ = [
     "detect",
     "detect_single",
     "track",
+    "track_and_save",
     # Data preparation
     "CLASSES",
     "CLASS_NAMES",
