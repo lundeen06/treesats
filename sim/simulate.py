@@ -23,7 +23,7 @@ except Exception as e:
 
 def create_constellation(n_sats=10000, sat=None):
     """
-    Create a constellation of satellites distributed across standard orbital bands.
+    Create a constellation of satellites randomly distributed across orbital bands.
 
     Parameters:
     -----------
@@ -44,15 +44,27 @@ def create_constellation(n_sats=10000, sat=None):
     --------
     constellation : ndarray
         Array of Keplerian orbital elements [a, e, i, omega, Omega, M] for tensorgator
-        Satellite of interest is at index 0, remaining satellites fill the constellation.
+        Satellite of interest is at index 0, remaining satellites randomly distributed.
     """
 
-    # Define orbital bands (altitude in km, inclination in degrees)
-    bands = [
-        {"altitude": 550, "inclination": 53.0},   # Starlink-like
-        {"altitude": 600, "inclination": 97.6},   # SSO
-        {"altitude": 500, "inclination": 30.0},   # Low inclination
-        {"altitude": 700, "inclination": 0.0},    # Equatorial
+    # Define realistic orbital shells (altitude-inclination pairs)
+    # Based on real constellations like Starlink, OneWeb, etc.
+    shells = [
+        # Low equatorial shells
+        {"name": "LEO Equatorial Low", "altitude": 450, "altitude_var": 30, "inclination": 5.0, "inc_var": 5},
+        {"name": "LEO Equatorial Mid", "altitude": 550, "altitude_var": 30, "inclination": 5.0, "inc_var": 5},
+
+        # Mid-inclination (Starlink-like)
+        {"name": "Mid-Inc Shell 1", "altitude": 540, "altitude_var": 20, "inclination": 53.0, "inc_var": 3},
+        {"name": "Mid-Inc Shell 2", "altitude": 570, "altitude_var": 20, "inclination": 53.2, "inc_var": 3},
+
+        # Sun-synchronous orbits (different altitudes)
+        {"name": "SSO Low", "altitude": 600, "altitude_var": 25, "inclination": 97.6, "inc_var": 2},
+        {"name": "SSO High", "altitude": 700, "altitude_var": 30, "inclination": 98.2, "inc_var": 2},
+
+        # Polar orbits
+        {"name": "Polar Low", "altitude": 500, "altitude_var": 30, "inclination": 87.5, "inc_var": 4},
+        {"name": "Polar High", "altitude": 650, "altitude_var": 40, "inclination": 88.0, "inc_var": 4},
     ]
 
     # Earth radius in meters (tensorgator expects meters!)
@@ -83,26 +95,47 @@ def create_constellation(n_sats=10000, sat=None):
         print(f"  Inclination: {sat['inclination']}°")
         print(f"  Eccentricity: {sat.get('eccentricity', 0.0)}")
 
-    # Distribute remaining satellites across bands
+    # Randomly distribute remaining satellites across shells
     remaining_sats = n_sats - sat_index
-    sats_per_band = remaining_sats // len(bands)
 
-    for band in bands:
-        # Semi-major axis (radius in meters)
-        # Convert altitude from km to meters
-        a = earth_radius + band["altitude"] * 1000
+    print(f"\nRandomly distributing {remaining_sats} satellites across {len(shells)} orbital shells...")
 
-        # Create satellites in this band
-        for _ in range(sats_per_band):
-            a_list.append(a)
-            e_list.append(0.0)  # Circular orbits
-            # Randomize inclination within ±5 degrees of the band inclination
-            i_list.append(np.radians(band["inclination"] + np.random.uniform(-5, 5)))
+    # Randomly assign each satellite to a shell
+    shell_assignments = np.random.choice(len(shells), size=remaining_sats)
 
-            # Randomize RAAN and mean anomaly for distribution
-            omega_list.append(0.0)  # Circular orbit, so argument of periapsis doesn't matter
-            Omega_list.append(np.random.uniform(0, 2 * np.pi))
-            M_list.append(np.random.uniform(0, 2 * np.pi))
+    # Count and print satellites per shell
+    for i, shell in enumerate(shells):
+        count = np.sum(shell_assignments == i)
+        if count > 0:
+            print(f"  {shell['name']:20s}: {count:5d} sats (~{100*count/remaining_sats:4.1f}%) | "
+                  f"Alt: {shell['altitude']}±{shell['altitude_var']}km, Inc: {shell['inclination']}±{shell['inc_var']}°")
+
+    # Create satellites with shell-specific parameters
+    for shell_idx in shell_assignments:
+        shell = shells[shell_idx]
+
+        # Altitude: shell altitude ± variation
+        altitude_km = np.random.normal(shell["altitude"], shell["altitude_var"])
+        altitude_km = np.clip(altitude_km, 400, 800)  # Keep within LEO range
+        a_list.append(earth_radius + altitude_km * 1000)
+
+        # Eccentricity: 0.0-0.005 (very circular)
+        e_list.append(np.random.uniform(0.0, 0.005))
+
+        # Inclination: shell inclination ± variation
+        inc_variation = np.random.normal(0, shell["inc_var"])
+        inclination = shell["inclination"] + inc_variation
+        inclination = np.clip(inclination, 0, 180)
+        i_list.append(np.radians(inclination))
+
+        # Argument of periapsis: random (doesn't matter much for circular orbits)
+        omega_list.append(np.random.uniform(0, 2 * np.pi))
+
+        # RAAN: uniformly distributed for coverage
+        Omega_list.append(np.random.uniform(0, 2 * np.pi))
+
+        # Mean anomaly: uniformly distributed for spread
+        M_list.append(np.random.uniform(0, 2 * np.pi))
 
     # Create constellation array for tensorgator
     # Format: [a, e, i, omega, Omega, M] for each satellite
