@@ -10,6 +10,7 @@ import argparse
 import json
 import cv2
 import torch
+import numpy as np
 from datetime import datetime
 
 
@@ -420,6 +421,351 @@ def track_and_save(
     return str(run_dir)
 
 
+def track_satellites(
+    video_path: str,
+    weights_path: str = None,
+    conf_threshold: float = 0.25,
+    tracker: str = "botsort.yaml",
+    verbose: bool = True,
+) -> dict:
+    """
+    Track satellites across video frames and return N×3 matrices per frame.
+
+    Each matrix row contains [track_id, x_center, y_center] where track_id
+    persists across frames for the same satellite.
+
+    Args:
+        video_path: Path to video file
+        weights_path: Path to model weights (default: uses best.pt)
+        conf_threshold: Confidence threshold (0-1)
+        tracker: Tracker config - "botsort.yaml" or "bytetrack.yaml"
+        verbose: Print progress updates
+
+    Returns:
+        Dictionary containing:
+        {
+            "frames": [
+                {
+                    "frame_id": int,
+                    "pixel_matrix": np.ndarray,      # N×3 [track_id, x_px, y_px]
+                    "normalized_matrix": np.ndarray, # N×3 [track_id, x_norm, y_norm]
+                },
+                ...
+            ],
+            "image_size": (width, height),
+            "total_frames": int,
+            "total_tracks": int,
+        }
+
+    Example:
+        >>> result = track_satellites("video.mp4")
+        >>> frame_0 = result["frames"][0]
+        >>> pixel_coords = frame_0["pixel_matrix"]      # [[1, 125, 80], [2, 200, 150], ...]
+        >>> normalized = frame_0["normalized_matrix"]   # [[1, 0.0, -0.36], [2, 0.6, 0.2], ...]
+    """
+    # Load model
+    model = load_model(weights_path)
+
+    # Get video properties
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise ValueError(f"Could not open video: {video_path}")
+
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.release()
+
+    if verbose:
+        print(f"Processing video: {video_path}")
+        print(f"  Resolution: {width}x{height}")
+        print(f"  Frames: {total_frames}")
+
+    # Run tracking
+    results = model.track(
+        source=video_path,
+        conf=conf_threshold,
+        tracker=tracker,
+        save=False,
+        show=False,
+        imgsz=256,
+        device=get_device(),
+        persist=True,
+        stream=True,  # Stream for memory efficiency
+        verbose=False,
+    )
+
+    # Process each frame
+    frames_data = []
+    all_track_ids = set()
+    frame_count = 0
+
+    for result in results:
+        # Build matrices for this frame
+        pixel_rows = []
+        normalized_rows = []
+
+        boxes = result.boxes
+        if boxes is not None and len(boxes) > 0 and boxes.id is not None:
+            for i, box in enumerate(boxes):
+                track_id = int(boxes.id[i])
+                all_track_ids.add(track_id)
+
+                # Get center position from xywh (center_x, center_y, width, height)
+                xywh = box.xywh[0].tolist()
+                x_center = xywh[0]
+                y_center = xywh[1]
+
+                # Pixel coordinates
+                pixel_rows.append([track_id, x_center, y_center])
+
+                # Normalized coordinates:
+                # X: -1 (left) to +1 (right)
+                # Y: -1 (bottom) to +1 (top)
+                x_norm = (x_center / (width / 2)) - 1.0
+                y_norm = 1.0 - (y_center / (height / 2))  # Flip Y axis
+
+                normalized_rows.append([track_id, x_norm, y_norm])
+
+        # Convert to numpy arrays
+        if pixel_rows:
+            pixel_matrix = np.array(pixel_rows, dtype=np.float32)
+            normalized_matrix = np.array(normalized_rows, dtype=np.float32)
+        else:
+            # Empty frame - return empty N×3 arrays
+            pixel_matrix = np.empty((0, 3), dtype=np.float32)
+            normalized_matrix = np.empty((0, 3), dtype=np.float32)
+
+        frames_data.append({
+            "frame_id": frame_count,
+            "pixel_matrix": pixel_matrix,
+            "normalized_matrix": normalized_matrix,
+        })
+
+        frame_count += 1
+
+        if verbose and frame_count % 50 == 0:
+            print(f"  Processed {frame_count}/{total_frames} frames...")
+
+    if verbose:
+        print(f"\nTracking complete!")
+        print(f"  Total frames: {frame_count}")
+        print(f"  Unique tracks: {len(all_track_ids)}")
+
+    return {
+        "frames": frames_data,
+        "image_size": (width, height),
+        "total_frames": frame_count,
+        "total_tracks": len(all_track_ids),
+    }
+
+
+def track_video_custom(
+    video_path: str,
+    output_path: str = None,
+    output_dir: str = None,
+    weights_path: str = None,
+    conf_threshold: float = 0.25,
+    tracker: str = "botsort.yaml",
+    font_scale: float = 0.25,
+) -> str:
+    """
+    Track satellites and create custom annotated video with normalized coordinates.
+
+    Labels show: sat_id:{id} x:{x_norm:.2f} y:{y_norm:.2f}
+    where x,y are normalized to [-1, 1].
+    X: -1 (left) to +1 (right)
+    Y: -1 (bottom) to +1 (top)
+
+    Args:
+        video_path: Path to input video
+        output_path: Path to save output video (default: auto-generated)
+        output_dir: Directory to save output (overrides output_path auto-generation)
+        weights_path: Path to model weights
+        conf_threshold: Confidence threshold (0-1)
+        tracker: Tracker config
+        font_scale: Font size scale (default: 0.25 for small text)
+
+    Returns:
+        Path to output video
+    """
+    video_path = Path(video_path)
+
+    # Set output path
+    if output_path is not None:
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+    elif output_dir is not None:
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / f"{video_path.stem}_tracked.mp4"
+    else:
+        # Auto-generate with run folder
+        base_output_dir = Path(__file__).parent / "output" / "tracked_videos"
+        
+        # Find next run number
+        run_num = 1
+        while (base_output_dir / f"run{run_num}").exists():
+            run_num += 1
+        
+        output_dir = base_output_dir / f"run{run_num}"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / f"{video_path.stem}_tracked.mp4"
+
+    # Load model
+    model = load_model(weights_path)
+
+    # Get video properties
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        raise ValueError(f"Could not open video: {video_path}")
+
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = int(cap.get(cv2.CAP_PROP_FPS))
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.release()
+
+    print(f"Processing: {video_path}")
+    print(f"  Resolution: {width}x{height}, FPS: {fps}, Frames: {total_frames}")
+
+    # Create video writer (use mp4v codec for better compatibility)
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
+
+    # Run tracking
+    results = model.track(
+        source=str(video_path),
+        conf=conf_threshold,
+        tracker=tracker,
+        save=False,
+        show=False,
+        imgsz=256,
+        device=get_device(),
+        persist=True,
+        stream=True,
+        verbose=False,
+    )
+
+    frame_count = 0
+    for result in results:
+        # Get original frame
+        frame = result.orig_img.copy()
+
+        boxes = result.boxes
+        if boxes is not None and len(boxes) > 0 and boxes.id is not None:
+            for i, box in enumerate(boxes):
+                track_id = int(boxes.id[i])
+
+                # Get bounding box
+                xyxy = box.xyxy[0].tolist()
+                x1, y1, x2, y2 = int(xyxy[0]), int(xyxy[1]), int(xyxy[2]), int(xyxy[3])
+
+                # Get center in pixels
+                x_center = (xyxy[0] + xyxy[2]) / 2
+                y_center = (xyxy[1] + xyxy[3]) / 2
+
+                # Convert to normalized coordinates [-1, 1]
+                # X: -1 (left) to +1 (right)
+                # Y: -1 (bottom) to +1 (top)
+                x_norm = (x_center / (width / 2)) - 1.0
+                y_norm = 1.0 - (y_center / (height / 2))  # Flip Y axis
+
+                # Draw bounding box (thin green line)
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 1)
+
+                # Create label with small font
+                label = f"sat_id:{track_id} x:{x_norm:.2f} y:{y_norm:.2f}"
+                
+                # Calculate text position (above the box)
+                text_y = max(y1 - 2, 8)
+                
+                # Draw text with small font
+                cv2.putText(
+                    frame, 
+                    label, 
+                    (x1, text_y), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 
+                    font_scale, 
+                    (0, 255, 0), 
+                    1,
+                    cv2.LINE_AA
+                )
+
+        # Write frame
+        out.write(frame)
+        frame_count += 1
+
+        if frame_count % 50 == 0:
+            print(f"  Processed {frame_count}/{total_frames} frames...")
+
+    out.release()
+
+    print(f"\nVideo saved to: {output_path}")
+    print(f"  Total frames: {frame_count}")
+
+    return str(output_path)
+
+
+def track_satellites_to_file(
+    video_path: str,
+    output_path: str = None,
+    weights_path: str = None,
+    conf_threshold: float = 0.25,
+    tracker: str = "botsort.yaml",
+) -> str:
+    """
+    Track satellites and save matrices to a single JSON file.
+
+    Args:
+        video_path: Path to video file
+        output_path: Path to save JSON output (default: auto-generated)
+        weights_path: Path to model weights
+        conf_threshold: Confidence threshold (0-1)
+        tracker: Tracker config
+
+    Returns:
+        Path to saved JSON file
+    """
+    result = track_satellites(
+        video_path=video_path,
+        weights_path=weights_path,
+        conf_threshold=conf_threshold,
+        tracker=tracker,
+        verbose=True,
+    )
+
+    # Set default output path
+    if output_path is None:
+        output_dir = Path(__file__).parent / "output" / "tracking_matrices"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        video_name = Path(video_path).stem
+        output_path = output_dir / f"{video_name}_tracking.json"
+
+    # Convert numpy arrays to lists for JSON serialization
+    serializable_frames = []
+    for frame in result["frames"]:
+        serializable_frames.append({
+            "frame_id": frame["frame_id"],
+            "pixel_matrix": frame["pixel_matrix"].tolist(),
+            "normalized_matrix": frame["normalized_matrix"].tolist(),
+        })
+
+    output_data = {
+        "source": str(video_path),
+        "image_size": result["image_size"],
+        "total_frames": result["total_frames"],
+        "total_tracks": result["total_tracks"],
+        "frames": serializable_frames,
+    }
+
+    with open(output_path, "w") as f:
+        json.dump(output_data, f, indent=2)
+
+    print(f"Saved tracking matrices to: {output_path}")
+    return str(output_path)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run satellite detection inference")
     parser.add_argument(
@@ -477,10 +823,23 @@ if __name__ == "__main__":
         default=None,
         help="Name for the tracking run (default: auto-increment run1, run2, ...)",
     )
+    parser.add_argument(
+        "--matrices",
+        action="store_true",
+        help="Output N×3 tracking matrices (pixel and normalized) to JSON",
+    )
 
     args = parser.parse_args()
 
-    if args.track:
+    if args.matrices:
+        # Output tracking matrices
+        track_satellites_to_file(
+            video_path=args.source,
+            weights_path=args.weights,
+            conf_threshold=args.conf,
+            tracker=args.tracker,
+        )
+    elif args.track:
         if args.save_run:
             # Use track_and_save for organized output with N×3 matrices
             track_and_save(
