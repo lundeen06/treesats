@@ -6,6 +6,7 @@ import numpy as np
 import tensorgator as tg
 import time
 import sys
+import argparse
 
 # Check if CUDA is available
 CUDA_AVAILABLE = False
@@ -138,11 +139,21 @@ def run_simulation(n_sats=10000, n_timesteps=100, duration_hours=24):
 
 
 if __name__ == "__main__":
-    # Run simulation with 10k satellites
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Run satellite constellation simulation')
+    parser.add_argument('--duration', type=float, default=24,
+                        help='Simulation duration in hours (default: 24)')
+    parser.add_argument('--visualize', action='store_true',
+                        help='Generate 3D visualization of satellite orbits')
+    parser.add_argument('--save', type=str, default=None,
+                        help='Path to save visualization (default: display interactively)')
+    args = parser.parse_args()
+
+    # Run simulation with defaults
     positions, times, constellation = run_simulation(
-        n_sats=10,
+        n_sats=10000,
         n_timesteps=100,
-        duration_hours=24
+        duration_hours=args.duration
     )
 
     # Example: Access position of first satellite at first timestep
