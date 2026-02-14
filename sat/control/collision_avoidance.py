@@ -12,6 +12,7 @@ import cvxpy as cp
 from .rtn_to_eci_propagate import (
     rv_to_kepler,
     propagate_constellation,
+    propagate_chief,
     MU_EARTH,
 )
 
@@ -59,19 +60,7 @@ def _orbit_period_seconds(r_eci, v_eci, mu=MU_EARTH):
 
 def _propagate_chief_only(r_chief, v_chief, time_array, backend="cpu"):
     """Propagate chief only; return positions (n_times, 3) in km, ECI."""
-    import tensorgator as tg
-    kepler = rv_to_kepler(r_chief, v_chief)
-    const_si = np.zeros((1, 6))
-    const_si[0, 0] = kepler[0] * 1000.0
-    const_si[0, 1:6] = kepler[1:6]
-    pos_si = tg.satellite_positions(
-        np.asarray(time_array, dtype=float),
-        const_si,
-        backend=backend,
-        return_frame="eci",
-        input_type="kepler",
-    )
-    return (pos_si[0] / 1000.0).copy()  # (n_times, 3) km
+    return propagate_chief(r_chief, v_chief, time_array, backend=backend)  # (n_times, 3) km
 
 
 def detect_near_miss(positions_chief, positions_constellation, radius_km=DEFAULT_RADIUS_KM):
@@ -188,16 +177,25 @@ def collision_avoidance_delta_v(
 
     A_list = []
     b_list = []
-    for t in range(len(time_array)):
-        for k in range(n_sats):
+    # Skip t=0: at impulse time, position is unchanged by dv, so Phi_rv(0)=0 (infeasible).
+    # Add constraints at time of closest approach per deputy (and neighbors) for feasibility.
+    for k in range(n_sats):
+        d_vals = [
+            np.linalg.norm(pos_chief[t] - pos_constellation[t, k])
+            for t in range(1, len(time_array))
+        ]
+        t_min = 1 + int(np.argmin(d_vals))
+        d_min = np.linalg.norm(pos_chief[t_min] - pos_constellation[t_min, k])
+        if d_min >= constraint_margin_km:
+            continue
+        for t in (t_min - 1, t_min, t_min + 1):
+            if t < 1 or t >= len(time_array):
+                continue
             r_rel = pos_chief[t] - pos_constellation[t, k]
-            d = np.linalg.norm(r_rel)
-            if d < 1e-9:
-                d = 1e-9
+            d = max(np.linalg.norm(r_rel), 1e-9)
             if d >= constraint_margin_km:
                 continue
             u = r_rel / d
-            # Linearized: u^T (r_rel + Phi_rv(t) @ dv) >= radius_km  =>  u^T Phi @ dv >= radius_km - d
             A_list.append(u @ Phi_rv[t])
             b_list.append(radius_km - d)
 
@@ -213,9 +211,13 @@ def collision_avoidance_delta_v(
     problem = cp.Problem(objective, constraints)
     try:
         problem.solve()
-        if "optimal" not in str(problem.status).lower():
+        status = str(problem.status).lower()
+        if "optimal" not in status:
             return np.zeros(3)
-        return dv.value
+        val = dv.value
+        if val is None:
+            return np.zeros(3)
+        return np.asarray(val).reshape(3)
     except Exception:
         return np.zeros(3)
 

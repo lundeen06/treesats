@@ -4,6 +4,7 @@ Attitude control and guidance algorithms.
 
 from .rtn_to_eci_propagate import (
     relative_rtn_to_absolute_eci,
+    propagate_chief,
     propagate_constellation,
     propagate_deputy,
     rv_to_kepler,
@@ -17,6 +18,7 @@ from .collision_avoidance import (
 
 __all__ = [
     "relative_rtn_to_absolute_eci",
+    "propagate_chief",
     "propagate_constellation",
     "propagate_deputy",
     "rv_to_kepler",

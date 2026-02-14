@@ -160,6 +160,24 @@ def rv_to_kepler(r_eci, v_eci, mu=MU_EARTH):
     return kepler
 
 
+def propagate_chief(r_chief, v_chief, time_array, backend="cpu"):
+    """
+    Propagate chief (single satellite) only; return ECI positions (n_times, 3) in km.
+    """
+    import tensorgator as tg
+    r_chief = np.asarray(r_chief, dtype=float).reshape(3)
+    v_chief = np.asarray(v_chief, dtype=float).reshape(3)
+    kepler = rv_to_kepler(r_chief, v_chief)
+    const_si = np.zeros((1, 6))
+    const_si[0, 0] = kepler[0] * 1000.0
+    const_si[0, 1:6] = kepler[1:6]
+    time_array = np.asarray(time_array, dtype=float)
+    pos_si = tg.satellite_positions(
+        time_array, const_si, backend=backend, return_frame="eci", input_type="kepler"
+    )
+    return (pos_si[0] / 1000.0).copy()
+
+
 def propagate_constellation(
     r_chief,
     v_chief,
