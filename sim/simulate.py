@@ -8,18 +8,16 @@ import time
 import sys
 
 # Check if CUDA is available
+CUDA_AVAILABLE = False
 try:
     from numba import cuda
-    if not cuda.is_available():
-        print("ERROR: CUDA GPU not available!")
-        print("This simulation requires an NVIDIA GPU with CUDA support.")
-        print("Please ensure your GPU is connected and CUDA drivers are installed.")
-        sys.exit(1)
+    if cuda.is_available():
+        CUDA_AVAILABLE = True
+        print("CUDA GPU detected - will use GPU acceleration")
+    else:
+        print("CUDA GPU not available - will use CPU backend")
 except Exception as e:
-    print("ERROR: Could not initialize CUDA!")
-    print(f"Error: {e}")
-    print("Please ensure CUDA drivers are properly installed.")
-    sys.exit(1)
+    print(f"CUDA not available ({e}) - will use CPU backend")
 
 def create_constellation(n_sats=10000):
     """
@@ -107,16 +105,19 @@ def run_simulation(n_sats=10000, n_timesteps=100, duration_hours=24):
     # Create time array
     time_array = np.linspace(0, duration_hours * 3600, n_timesteps)  # Convert hours to seconds
 
+    # Select backend based on CUDA availability
+    backend = 'cuda' if CUDA_AVAILABLE else 'cpu'
+
     print(f"Running simulation for {n_timesteps} timesteps over {duration_hours} hours...")
-    print(f"Using GPU (CUDA)")
+    print(f"Using backend: {backend.upper()}")
 
     start_time = time.time()
 
-    # Run simulation on GPU
+    # Run simulation
     positions = tg.satellite_positions(
         time_array,
         constellation,
-        backend='cuda',  # Use GPU acceleration
+        backend=backend,
         return_frame='eci',  # Earth-Centered Inertial frame
         input_type='kepler'
     )
@@ -139,7 +140,7 @@ def run_simulation(n_sats=10000, n_timesteps=100, duration_hours=24):
 if __name__ == "__main__":
     # Run simulation with 10k satellites
     positions, times, constellation = run_simulation(
-        n_sats=10000,
+        n_sats=10,
         n_timesteps=100,
         duration_hours=24
     )
