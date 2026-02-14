@@ -144,7 +144,8 @@ def run_simulation(n_sats=10000, duration_hours=24, dt_seconds=60, sat=None):
     n_timesteps = len(time_array)
 
     # Select backend based on CUDA availability
-    backend = 'cuda' if CUDA_AVAILABLE else 'cpu'
+    # backend = 'cpu' if CUDA_AVAILABLE else 'cpu'
+    backend = 'cpu' # for now use cpu for propagation
 
     print(f"Running simulation for {n_timesteps} timesteps over {duration_hours} hours (dt={dt_seconds}s)...")
     print(f"Using backend: {backend.upper()}")
