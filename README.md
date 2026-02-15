@@ -307,7 +307,7 @@ Supports images, image sequences, and video (mp4/avi/mov).
 
 - **Sid Anantha** - SpaceX Starship GNC
 - **Rahul Ayanampudi** - Northrop Grumman GNC/Physical AI
-- **Lundeen Cahilly**
+- **Lundeen Cahilly** - Stanford CS, Incoming GNC @ K2 Space
 - **Raj Thapliyal** - Defence Science Org. - Satellite Technology & Research / NUS ML
 ---
 
