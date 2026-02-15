@@ -1,22 +1,24 @@
 # TreeSats 🛰️🌲: Defending Your Skies
 
-**Autonomous orbital collision avoidance in GPS-denied environments.**
+**Autonomous orbital collision detection, avoidance, and threat assessment in communication-denied environments.**
 
-TreeSats enables satellites to detect threats, predict collisions, and execute evasive maneuvers—all without GPS or ground contact. Using only star tracker cameras (standard spacecraft hardware), TreeSats provides autonomous protection in contested space.
+TreeSats enables satellites to detect collisions, execute evasive maneuvers, and assess threats—all without GPS or ground contact. Using only star tracker cameras (standard spacecraft hardware), TreeSats provides autonomous protection in contested space.
 
 ---
 
 ## The Problem
 
-**GPS interference is creating navigation black zones** across Eastern Europe, Southeast Asia, and conflict regions. Meanwhile, satellite launches have increased **+2000% since 2010**, and satellites are no longer passive—they maneuver unpredictably, creating collision risks with no margin for error.
+Thousands of satellites orbit Earth today. SpaceX alone plans to deploy **1 million** by 2030. Meanwhile, **GPS and communications jamming** is expanding across Eastern Europe, Southeast Asia, and Myanmar—affecting even commercial satellites. Ground station control isn't viable at this scale in contested regions.
+
+Satellites are no longer passive—they maneuver unpredictably, creating collision risks with no margin for error.
 
 ## The Solution: StarGuard
 
-TreeSats' **StarGuard** system operates in three autonomous phases:
+TreeSats' **StarGuard** system provides three autonomous capabilities:
 
-1. **Detect** - YOLOv8 + BoT-SORT identify satellites and debris in star tracker imagery
-2. **Predict** - Unscented Kalman Filter estimates trajectories from angles-only measurements
-3. **Act** - Convex optimization computes fuel-optimal evasive maneuvers
+1. **Collision Detection** - YOLOv8 + BoT-SORT identify satellites and debris in star tracker imagery, UKF estimates trajectories from angles-only measurements
+2. **Collision Avoidance** - Convex optimization computes fuel-optimal evasive maneuvers
+3. **Threat Assessment** - NVIDIA Cosmos VLM classifies satellite types and maneuver intent
 
 All processing happens onboard using existing star tracker cameras. No GPS. No ground link required.
 
@@ -47,8 +49,8 @@ python main.py --mode pipeline
 
 ## Key Features
 
-- **GPS-Independent**: Operates in denied environments using only star tracker imagery
-- **Autonomous**: Real-time detection and evasive maneuvers without ground intervention
+- **Communication-Independent**: Operates without GPS or ground contact using only star tracker imagery
+- **Autonomous**: Real-time collision detection, avoidance, and threat assessment without ground intervention
 - **Scalable**: GPU acceleration handles 10,000+ satellites simultaneously
 - **Mission-Aware**: Fuel-optimal maneuvers via convex optimization
 
@@ -160,7 +162,7 @@ If risk exceeds threshold → trigger autonomous maneuver.
 
 ## GPU Orbital Simulation
 
-TreeSats uses **Tensorgator** to propagate 10,000+ satellites on GPU:
+TreeSats uses **Tensorgator** (GPU-accelerated Keplerian propagator) to simulate 10,000+ satellites:
 
 ```python
 # Solve Kepler's equation: M = E - e sin E
@@ -172,7 +174,7 @@ positions, velocities = propagate_constellation(
 )
 ```
 
-**Performance**: 10,000 satellites × 8,640 timesteps (24h @ 10s) in ~seconds on GPU vs. hours on CPU.
+**Performance**: 10,000 satellites × 8,640 timesteps (24h @ 10s) in seconds on GPU vs. hours on CPU.
 
 ---
 
@@ -272,9 +274,9 @@ Supports images, image sequences, and video (mp4/avi/mov).
 - Communications satellites
 
 ### National Security
-- Reconnaissance satellites in GPS-denied regions
+- Reconnaissance satellites in communication-denied regions
 - Resilient operations in contested environments
-- Autonomous threat detection and avoidance
+- Autonomous collision detection, avoidance, and threat assessment
 
 ### Space Situational Awareness
 - Orbital debris tracking
