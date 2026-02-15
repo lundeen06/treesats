@@ -5,67 +5,84 @@ Autonomous satellite collision avoidance and threat assessment in communication-
 ---
 Project Story
 
-## Inspiration
+## The Problem
 
-Tens of thousands of satellites orbit Earth today. SpaceX alone plans **1 million** by 2030. At that scale, ground-based collision avoidance doesn't work—especially when GPS and communications jamming is expanding across Eastern Europe, Southeast Asia, and Myanmar, affecting even commercial satellites.
+Tens of thousands of satellites orbit Earth today. SpaceX alone plans **1 million** by 2030. At that scale, ground-based collision avoidance doesn't work—especially when communications and GPS jamming are expanding across Ukraine, Taiwan, Iran, and Myanmar, now affecting commercial satellites.
 
-Satellites can't wait for ground commands when collision windows are measured in minutes. They need autonomous self-defense.
+**The constraints:**
+- Satellites can't wait for ground commands when collisions are imminent
+- Communication windows are limited or denied in contested regions
+- GPS is unavailable or jammed
+- Collision windows are measured in minutes, not hours
 
-## What it does
+Current satellite operators rely on ground stations for collision warnings and maneuver commands. This doesn't scale to mega-constellations in communication-denied environments.
 
-**StarGuard** provides three autonomous capabilities using only onboard star tracker cameras:
+## The Solution
+
+**StarGuard** provides autonomous collision avoidance and threat assessment using only onboard star tracker cameras—no ground link or GPS required.
+
+**Three autonomous capabilities:**
 
 1. **Collision Detection** - YOLOv8 detects satellites/debris in star tracker imagery, BoT-SORT tracks objects across frames, UKF estimates trajectories from angles-only measurements
 2. **Collision Avoidance** - Convex optimization computes fuel-optimal evasive maneuvers
 3. **Threat Assessment** - NVIDIA Cosmos VLM classifies satellite types and assesses maneuver intent
 
-No GPS. No ground link. Just existing spacecraft hardware operating autonomously.
+All processing happens onboard via edge compute using existing spacecraft hardware (star trackers).
 
-## How we built it
+## How It Works
 
-**Orbital Simulation**: Used Tensorgator (GPU-accelerated Keplerian propagator) to simulate 10,000+ satellite constellations and generate synthetic training data.
+**1. Orbital Simulation (Training Data Generation)**
+Used Tensorgator (GPU-accelerated Keplerian propagator) to simulate 10,000+ satellite constellations and generate synthetic training data for sensors. Built a pinhole camera model to render 256×256 star tracker images from the satellite's frame, auto-labeled via brightness thresholding—satellites appear as bright spots against space.
 
-**Synthetic Data Pipeline**: Built a pinhole camera model to render 256×256 star tracker images from observer frame. Auto-labeled via brightness thresholding—satellites appear as bright spots against black space.
+**2. Computer Vision Pipeline (Detection & Tracking)**
+Fine-tuned YOLOv8 for tiny satellite detection (3-5 pixel objects), integrated BoT-SORT for persistent tracking across frames. Extracts pixel coordinates → bearing angles (elevation/azimuth).
 
-**Computer Vision**: Fine-tuned YOLOv8 for tiny satellite detection, integrated BoT-SORT for persistent tracking across frames. Extracts pixel coordinates → bearing angles (elevation/azimuth).
-
-**Angles-Only Navigation**: Reconstructs full 6-DOF state from sequential images:
+**3. Angles-Only Navigation (State Reconstruction)**
+Reconstructs full 6-DOF state from sequential images:
 - 1 photo → bearing angles
 - 2 photos → bearing + depth → position vector
 - 3 photos → finite difference → position + velocity
 
-**State Estimation**: Implemented Unscented Kalman Filter that fuses orbital dynamics (Keplerian propagation) with star tracker measurements for noise-resistant trajectory estimates.
+**4. State Estimation (Trajectory Prediction)**
+Unscented Kalman Filter fuses orbital dynamics (Keplerian propagation) with star tracker measurements for noise-resistant trajectory estimates and collision prediction.
 
-**Collision Avoidance**: Built convex optimization solver (CVXPY) for minimum-ΔV maneuvers subject to collision constraints, fuel budgets, and thrust limits.
+**5. Collision Avoidance (Maneuver Planning)**
+Convex optimization solver (CVXPY) computes minimum-ΔV maneuvers subject to collision constraints, fuel budgets, and thrust limits.
 
-**Threat Assessment**: Integrated NVIDIA Cosmos Reason VLM via vLLM for real-time satellite classification from proximity imagery.
+**6. Threat Assessment (Object Classification)**
+NVIDIA Cosmos Reason VLM via vLLM provides real-time satellite classification from proximity operations imagery—identifies satellite types and assesses maneuver intent.
 
-## Challenges we ran into
+## Technical Challenges & Solutions
 
 **Angles-Only Navigation**: Reconstructing 3D trajectories from 2D bearing angles is ill-posed. Solved by leveraging temporal information across multiple frames and constraining solutions with orbital dynamics.
 
-**GPU Orbital Mechanics**: Kepler's equation (`M = E - e sin E`) requires iterative numerical methods. Optimized Newton-Raphson for CUDA with vectorized operations across 10k+ satellites.
+**GPU Orbital Mechanics**: Kepler's equation (`M = E - e sin E`) requires iterative numerical methods. Optimized Newton-Raphson for CUDA with vectorized operations across 10k+ satellites—reducing simulation time from hours to seconds.
 
-**Tiny Object Detection**: Satellites appear as 3-5 pixel bright spots. Required careful YOLOv8 hyperparameter tuning and augmentation strategies.
+**Tiny Object Detection**: Satellites appear as 3-5 pixel bright spots in star tracker imagery. Required careful YOLOv8 hyperparameter tuning and augmentation strategies for robust detection.
 
-**Real-Time Performance**: Star tracker processing, detection, tracking, and maneuver planning must happen in real-time onboard. Achieved through efficient model selection and GPU acceleration.
+**Real-Time Onboard Performance**: Star tracker processing, detection, tracking, and maneuver planning must happen in real-time onboard with limited compute. Achieved through efficient model selection, GPU acceleration, and edge compute optimization.
 
-## Accomplishments that we're proud of
+## Key Results
 
 - **End-to-end autonomy**: Raw pixels → executed maneuvers with no human in the loop
-- **Zero manual labeling**: Fully automated synthetic data pipeline
+- **Fully automated pipeline**: Zero manual labeling—synthetic data generation with auto-labeling
 - **Scalability**: Handles mega-constellations (10,000+ satellites) on consumer GPUs
 - **Production-ready**: Uses only existing spacecraft hardware (star trackers)
+- **Communication-independent**: Operates without GPS or ground contact
 
-## What we learned
+## Impact
+
+StarGuard enables satellites to operate autonomously in communication-denied environments—critical for mega-constellations, commercial satellites over contested regions, and national security missions where ground contact is limited or unavailable.
+
+## Technical Insights
 
 - GPU parallelization transforms orbital simulation from hours to seconds
 - Sequential observations + dynamics constraints enable angles-only navigation
 - Star tracker imagery is ideal for object detection—high contrast, known background
 - Convex optimization guarantees globally optimal collision avoidance solutions
-- VLMs can run efficiently enough for real-time onboard inference
+- VLMs can run efficiently enough for real-time onboard inference and complex threat assessments
 
-## What's next for TreeSats
+## What's Next
 
 - Embedded deployment on radiation-hardened flight computers
 - Multi-sensor fusion (star tracker + IMU + magnetometer)
