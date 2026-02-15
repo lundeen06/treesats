@@ -1,4 +1,5 @@
 tensorgator
+dotenv
 numpy
 matplotlib
 cvxpy

@@ -18,10 +18,9 @@ load_dotenv()
 # NVIDIA API Configuration
 NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "not-used")
 COSMOS_API_URL = "http://127.0.0.1:8000/v1/chat/completions"
-COSMOS_MODEL = "nvidia/cosmos-reason2-8b"
+COSMOS_MODEL = "/model"
 
 HEADERS = {
-    "Authorization": f"Bearer {NVIDIA_API_KEY}",
     "Content-Type": "application/json"
 }
 
