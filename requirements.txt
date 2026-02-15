@@ -6,3 +6,4 @@ cvxpy
 tqdm
 opencv-python
 requests
+rich
