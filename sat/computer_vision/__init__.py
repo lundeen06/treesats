@@ -34,6 +34,11 @@ from .auto_label import (
     auto_label_directory,
     preview_detections,
 )
+from .pipeline import (
+    SatelliteTracker,
+    TrackingFrame,
+    track_video,
+)
 
 __all__ = [
     # Training
@@ -57,4 +62,8 @@ __all__ = [
     "auto_label_image",
     "auto_label_directory",
     "preview_detections",
+    # Pipeline (high-level API)
+    "SatelliteTracker",
+    "TrackingFrame",
+    "track_video",
 ]

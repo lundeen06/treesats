@@ -19,13 +19,14 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-.DS_Store
 
 # Virtual environments
 venv/
 .venv/
 ENV/
 env/
+.env
+.DS_Store
 
 # IDE
 .vscode/
@@ -33,6 +34,9 @@ env/
 *.swp
 *.swo
 *~
+
+# Models
+cosmos-reason2
 
 # Jupyter
 .ipynb_checkpoints/
@@ -50,3 +54,4 @@ data/
 *.jpg
 *.pdf
 plots/
+output/sandbox/tracked_output.mp4

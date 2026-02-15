@@ -1,6 +1,8 @@
 tensorgator
+dotenv
 numpy
 matplotlib
 cvxpy
 tqdm
 opencv-python
+requests

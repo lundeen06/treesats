@@ -2,10 +2,10 @@ task: detect
 mode: train
 model: yolov8m.pt
 data: /home/asus/treesats/sat/computer_vision/config/dataset.yaml
-epochs: 100
+epochs: 50
 time: null
 patience: 100
-batch: 64
+batch: 1024
 imgsz: 256
 save: true
 save_period: -1
