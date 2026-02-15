@@ -292,10 +292,9 @@ Supports images, image sequences, and video (mp4/avi/mov).
 ## Team
 
 - **Sid Anantha** - SpaceX Starship GNC
-- **Rahul Ayanampudi**
+- **Rahul Ayanampudi** - Northrop Grumman GNC/Physical AI
 - **Lundeen Cahilly**
-- **Raj Thapliyal**
-
+- **Raj Thapliyal** - Defence Science Org. - Satellite Technology & Research / NUS ML
 ---
 
 ## Roadmap
