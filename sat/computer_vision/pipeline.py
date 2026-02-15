@@ -364,3 +364,53 @@ def track_video(video_path: str, conf_threshold: float = 0.25) -> Iterator[Track
     """
     tracker = SatelliteTracker(conf_threshold=conf_threshold)
     yield from tracker.stream_video(video_path)
+
+
+def track_satellites_normalized(
+    video_path: str,
+    conf_threshold: float = 0.25,
+) -> Iterator[dict]:
+    """
+    Track satellites in video, yielding normalized coords per frame.
+    
+    Satellite IDs are consistent across frames (same satellite = same ID).
+    Uses BoT-SORT tracking algorithm to maintain identity.
+    
+    Args:
+        video_path: Path to video file
+        conf_threshold: Detection confidence threshold (0-1)
+        
+    Yields:
+        dict with:
+            - "frame_id": int - current frame number (0-indexed)
+            - "satellites": dict mapping sat_id -> (x_norm, y_norm)
+              where x_norm, y_norm are in [-1, 1]
+              x: -1 = left edge, +1 = right edge
+              y: -1 = bottom edge, +1 = top edge
+    
+    Example:
+        from sat.computer_vision.pipeline import track_satellites_normalized
+        
+        for frame in track_satellites_normalized("simulation.mp4"):
+            print(f"Frame {frame['frame_id']}")
+            for sat_id, (x, y) in frame["satellites"].items():
+                print(f"  Satellite {sat_id}: x={x:.3f}, y={y:.3f}")
+            
+            # Feed to next pipeline stage
+            process_positions(frame["satellites"])
+    """
+    tracker = SatelliteTracker(conf_threshold=conf_threshold)
+    
+    for tracking_frame in tracker.stream_video(video_path):
+        # Convert normalized matrix to dict: {sat_id: (x, y), ...}
+        satellites = {}
+        for row in tracking_frame.normalized:
+            sat_id = int(row[0])
+            x_norm = float(row[1])
+            y_norm = float(row[2])
+            satellites[sat_id] = (x_norm, y_norm)
+        
+        yield {
+            "frame_id": tracking_frame.frame_id,
+            "satellites": satellites,
+        }
