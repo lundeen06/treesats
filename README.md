@@ -28,14 +28,14 @@ TreeSats' **Starguard** system provides three autonomous capabilities:
 
 2. **Collision Avoidance** - Convex optimization computes fuel-optimal evasive maneuvers for non-adversarial and adversarial satellites
 <p align="center">
-  <img src="https://drive.google.com/thumbnail?id=1DY_pNTBg9X7kO-Gb5fsW9xsS55nn07S-&sz=w1000" alt="Collision Avoidance" width="55%"/>
+  <img src="https://drive.google.com/thumbnail?id=1DY_pNTBg9X7kO-Gb5fsW9xsS55nn07S-&sz=w1000" alt="Collision Avoidance" width="60%"/>
   <img src="https://drive.google.com/thumbnail?id=1s6pmjE2kwMOZi4Kas_SFDr-vOzMF5uRe&sz=w1000" alt="Threat Assessment" width="35%"/>
 </p>
 
 3. **Threat Assessment** - NVIDIA Cosmos VLM conducts a satellite threat assessment for satellites in close proximity orbits
 <p align="center">
-  <img src="https://drive.google.com/thumbnail?id=1VvNbrP6w-B9JxoqLWdP5gTR2MLfsx2OF&sz=w1000" alt="Demo 0" width="60%"/>
-  <img src="https://drive.google.com/uc?export=view&id=1BDNoNxncAkacbsRdfgB7F8g53OMLWowd" alt="Demo 2" width="60%"/>
+  <img src="https://drive.google.com/thumbnail?id=1VvNbrP6w-B9JxoqLWdP5gTR2MLfsx2OF&sz=w1000" alt="Demo 0" width="80%"/>
+  <img src="https://drive.google.com/uc?export=view&id=1BDNoNxncAkacbsRdfgB7F8g53OMLWowd" alt="Demo 2" width="80%"/>
 </p>
 
 All processing happens onboard using existing star tracker cameras. No GPS. No ground link required.
