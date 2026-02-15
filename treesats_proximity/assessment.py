@@ -14,6 +14,17 @@ import json
 import re
 import tempfile
 import shutil
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
+from rich.syntax import Syntax
+from rich import box
+from rich.layout import Layout
+from rich.text import Text
+
+# Initialize Rich console
+console = Console()
 
 # Load environment variables from .env file
 load_dotenv()
@@ -64,8 +75,13 @@ def extract_frames_from_video(video_path: str, frame_interval: int = 30, max_fra
 
     # Create temp directory for frames
     temp_dir = tempfile.mkdtemp(prefix="treesats_frames_")
-    print(f"\nExtracting frames from video: {video_path}")
-    print(f"Temporary frames directory: {temp_dir}")
+
+    console.print(Panel(
+        f"[cyan]Video:[/cyan] {video_path}\n"
+        f"[cyan]Temp directory:[/cyan] {temp_dir}",
+        title="EXTRACTING FRAMES",
+        border_style="cyan"
+    ))
 
     # Open video
     cap = cv2.VideoCapture(video_path)
@@ -77,8 +93,8 @@ def extract_frames_from_video(video_path: str, frame_interval: int = 30, max_fra
     fps = cap.get(cv2.CAP_PROP_FPS)
     duration = total_frames / fps if fps > 0 else 0
 
-    print(f"Video info: {total_frames} frames @ {fps:.1f} fps ({duration:.1f}s)")
-    print(f"Extracting every {frame_interval} frames...")
+    console.print(f"[yellow]Video info:[/yellow] {total_frames} frames @ {fps:.1f} fps ({duration:.1f}s)")
+    console.print(f"[yellow]Extracting:[/yellow] Every {frame_interval} frames...")
 
     frame_paths = []
     frame_count = 0
@@ -104,8 +120,8 @@ def extract_frames_from_video(video_path: str, frame_interval: int = 30, max_fra
 
     cap.release()
 
-    print(f"Extracted {extracted_count} frames from {total_frames} total frames")
-    print(f"Effective sampling rate: {extracted_count/duration:.2f} frames/second\n")
+    console.print(f"✓ [green]Extracted {extracted_count} frames[/green] from {total_frames} total frames")
+    console.print(f"✓ [green]Sampling rate:[/green] {extracted_count/duration:.2f} frames/second\n")
 
     return frame_paths
 
@@ -153,18 +169,19 @@ def assess_with_cosmos(image_path: str, prior_belief: Dict = None) -> Tuple[floa
     """
     # Check if server is running
     if not check_cosmos_server():
-        print("\n" + "!"*60)
-        print("ERROR: Cosmos Reason server is not running!")
-        print("!"*60)
-        print("\nTo start the server, run in a separate terminal:")
-        print("  ./start_cosmos.sh")
-        print("\nOr manually:")
-        print("  docker run --runtime=nvidia --gpus all \\")
-        print("    --shm-size=32g -p 8000:8000 \\")
-        print("    -e NGC_API_KEY=$NGC_API_KEY \\")
-        print("    nvcr.io/nim/nvidia/cosmos-reason2-8b:latest")
-        print("\nWait for it to finish loading, then run this script again.")
-        print("!"*60 + "\n")
+        console.print(Panel.fit(
+            "[bold red]ERROR: Cosmos Reason server is not running![/bold red]\n\n"
+            "To start the server, run in a separate terminal:\n"
+            "  [cyan]./start_cosmos.sh[/cyan]\n\n"
+            "Or manually:\n"
+            "  [cyan]docker run --runtime=nvidia --gpus all \\[/cyan]\n"
+            "  [cyan]  --shm-size=32g -p 8000:8000 \\[/cyan]\n"
+            "  [cyan]  -e NGC_API_KEY=$NGC_API_KEY \\[/cyan]\n"
+            "  [cyan]  nvcr.io/nim/nvidia/cosmos-reason2-8b:latest[/cyan]\n\n"
+            "Wait for it to finish loading, then run this script again.",
+            title="SERVER NOT AVAILABLE",
+            border_style="red"
+        ))
         raise ConnectionError("Cosmos Reason server not available")
 
     image_b64 = encode_image_to_base64(image_path)
@@ -316,17 +333,34 @@ def assess_with_cosmos(image_path: str, prior_belief: Dict = None) -> Tuple[floa
                     obs_var=obs_var_threat
                 )
 
-                print(f"\n[Bayesian Update]")
-                print(f"  Prior: p={prior_p:.3f}, var={prior_var:.3f}")
-                print(f"  Observation: p={obs_p_threat:.3f}, var={obs_var_threat:.3f}")
-                print(f"  Posterior: p={p_threat:.3f}, var={var_threat:.3f}")
-                print(f"  Belief shift: {p_threat - prior_p:+.3f}")
+                # Create Bayesian update table
+                belief_shift = p_threat - prior_p
+                shift_color = "red" if belief_shift > 0.05 else "green" if belief_shift < -0.05 else "yellow"
+                uncertainty_reduction = prior_var - var_threat
+
+                table = Table(show_header=True, header_style="bold magenta", box=box.ROUNDED)
+                table.add_column("Metric", style="cyan")
+                table.add_column("Prior", justify="right", style="blue")
+                table.add_column("Observation", justify="right", style="yellow")
+                table.add_column("Posterior", justify="right", style="bold green")
+
+                table.add_row("p(threat)", f"{prior_p:.3f}", f"{obs_p_threat:.3f}", f"{p_threat:.3f}")
+                table.add_row("σ² (uncertainty)", f"{prior_var:.3f}", f"{obs_var_threat:.3f}", f"{var_threat:.3f}")
+
+                console.print(Panel(table, title="BAYESIAN BELIEF UPDATE", border_style="magenta"))
+                console.print(f"  [bold {shift_color}]Belief shift:[/bold {shift_color}] {belief_shift:+.3f}")
+                console.print(f"  [bold green]Uncertainty reduction:[/bold green] {uncertainty_reduction:.3f}\n")
             else:
                 # No prior, use raw observation
                 p_threat = obs_p_threat
                 var_threat = obs_var_threat
-                print(f"\n[Initial Assessment]")
-                print(f"  Observation: p={p_threat:.3f}, var={var_threat:.3f}")
+                console.print(Panel(
+                    f"[bold cyan]Initial observation:[/bold cyan]\n"
+                    f"  p(threat) = [bold yellow]{p_threat:.3f}[/bold yellow]\n"
+                    f"  σ² = [yellow]{var_threat:.3f}[/yellow]",
+                    title="INITIAL ASSESSMENT",
+                    border_style="cyan"
+                ))
 
             # Update confidence based on posterior uncertainty
             confidence = 1.0 - var_threat
@@ -364,12 +398,17 @@ def assess_sequence(image_paths: list) -> list:
     assessments = []
     prior_belief = None
 
-    print(f"\n{'='*60}")
-    print(f"SEQUENTIAL ASSESSMENT: {len(image_paths)} frames")
-    print(f"{'='*60}\n")
+    console.print(Panel.fit(
+        f"[bold cyan]Total frames:[/bold cyan] {len(image_paths)}\n"
+        f"[bold cyan]Method:[/bold cyan] Contextual observations + Bayesian fusion",
+        title="SEQUENTIAL VIDEO ASSESSMENT",
+        border_style="bold cyan"
+    ))
 
     for i, image_path in enumerate(image_paths):
-        print(f"\n--- Frame {i+1}/{len(image_paths)}: {image_path} ---")
+        # Frame header
+        console.rule(f"[bold blue]Frame {i+1}/{len(image_paths)}[/bold blue]", style="blue")
+        console.print(f"[dim]{image_path}[/dim]\n")
 
         # Assess current frame with prior from previous frame
         threat_score, analysis = assess_with_cosmos(image_path, prior_belief=prior_belief)
@@ -386,11 +425,42 @@ def assess_sequence(image_paths: list) -> list:
             'notes': analysis.get('notes', '')
         }
 
-        # Print frame summary
-        print(f"\nFrame {i+1} Summary:")
-        print(f"  Threat: {analysis['p_threat']:.3f} ± {analysis['var_threat']:.3f}")
-        print(f"  Type: {analysis.get('object_type', 'unknown')}")
-        print(f"  Confidence: {analysis.get('confidence', 0.0):.3f}")
+        # Print frame summary with color-coded threat level
+        threat = analysis['p_threat']
+        if threat < 0.3:
+            threat_color = "green"
+            threat_label = "LOW"
+        elif threat < 0.5:
+            threat_color = "yellow"
+            threat_label = "MEDIUM"
+        elif threat < 0.7:
+            threat_color = "orange1"
+            threat_label = "ELEVATED"
+        else:
+            threat_color = "red"
+            threat_label = "HIGH"
+
+        summary_table = Table(show_header=False, box=box.SIMPLE, padding=(0, 1))
+        summary_table.add_column("Metric", style="cyan")
+        summary_table.add_column("Value", justify="right")
+
+        summary_table.add_row("Threat Level", f"[bold {threat_color}]{threat_label}[/bold {threat_color}]")
+        summary_table.add_row("p(threat)", f"[{threat_color}]{threat:.3f}[/{threat_color}]")
+        summary_table.add_row("Uncertainty (σ²)", f"{analysis['var_threat']:.3f}")
+        summary_table.add_row("Confidence", f"{analysis.get('confidence', 0.0):.3f}")
+        summary_table.add_row("Type", analysis.get('object_type', 'unknown'))
+
+        console.print(Panel(summary_table, title=f"Frame {i+1} Summary", border_style=threat_color))
+
+        # Display reasoning for this frame
+        reasoning = analysis.get('notes', 'No reasoning provided')
+        console.print(Panel(
+            reasoning,
+            title=f"Frame {i+1} Analysis",
+            border_style=threat_color,
+            padding=(1, 2)
+        ))
+        console.print()
 
     return assessments
 
@@ -403,10 +473,10 @@ def main(image_path: str, prior_belief: Dict = None):
         image_path: Path to space object image
         prior_belief: Optional prior assessment for Bayesian updating
     """
-    print(f"Analyzing space object: {image_path}")
+    console.print(f"\n[bold cyan]Analyzing space object:[/bold cyan] {image_path}")
 
     # Use Cosmos Reason VLM for complete analysis
-    print("\n[1/2] Analyzing with Cosmos Reason VLM...")
+    console.print("\n[bold cyan][1/2][/bold cyan] Analyzing with Cosmos Reason VLM...")
     threat_score, analysis = assess_with_cosmos(image_path, prior_belief=prior_belief)
 
     # Extract analysis data
@@ -420,48 +490,101 @@ def main(image_path: str, prior_belief: Dict = None):
     threat_assessment = analysis.get('threat_assessment', {})
     notes = analysis.get('notes', '')
 
-    # Results
-    print("\n" + "="*60)
-    print("SPACE OBJECT ASSESSMENT RESULTS")
-    print("="*60)
-    print(f"Image: {image_path}")
-    print(f"\nObject Type: {object_type.upper()}")
-    print(f"Subtype: {object_subtype}")
-    print(f"\nComponents/Features: {len(components)}")
-    for component in components:
-        name = component.get('name', 'unknown')
-        desc = component.get('description', '')
-        condition = component.get('condition', 'unknown')
-        print(f"  - {name}: {desc} [{condition}]")
-
-    if characteristics:
-        print(f"\nCharacteristics:")
-        for key, value in characteristics.items():
-            print(f"  - {key}: {value}")
-
-    if threat_assessment:
-        print(f"\nThreat Assessment:")
-        for key, value in threat_assessment.items():
-            if isinstance(value, list):
-                print(f"  - {key}: {', '.join(value)}")
-            else:
-                print(f"  - {key}: {value}")
-
-    print(f"\nP(Threat): {p_threat:.3f}")
-    print(f"Confidence: {confidence:.3f}")
-    print(f"Var(Threat): {var_threat:.3f}")
-
-    # Threat level classification
+    # Threat level classification with colors
     if p_threat < 0.3:
         threat_level = "LOW"
-    elif p_threat < 0.7:
+        threat_color = "green"
+    elif p_threat < 0.5:
         threat_level = "MEDIUM"
+        threat_color = "yellow"
+    elif p_threat < 0.7:
+        threat_level = "ELEVATED"
+        threat_color = "orange1"
     else:
         threat_level = "HIGH"
+        threat_color = "red"
 
-    print(f"\nThreat Level: {threat_level}")
-    print(f"\nReasoning:\n{notes}")
-    print("="*60)
+    # Main results table
+    results_table = Table(title="SPACE OBJECT ASSESSMENT", title_style="bold white", box=box.DOUBLE_EDGE, show_header=False)
+    results_table.add_column("Metric", style="bold cyan", width=20)
+    results_table.add_column("Value", style="white")
+
+    results_table.add_row("Image", os.path.basename(image_path))
+    results_table.add_row("Object Type", f"[bold]{object_type.upper()}[/bold]")
+    results_table.add_row("Subtype", object_subtype)
+    results_table.add_row("", "")  # Spacer
+    results_table.add_row("Threat Level", f"[bold {threat_color}]{threat_level}[/bold {threat_color}]")
+    results_table.add_row("p(Threat)", f"[{threat_color}]{p_threat:.3f}[/{threat_color}]")
+    results_table.add_row("Confidence", f"{confidence:.3f}")
+    results_table.add_row("Uncertainty", f"{var_threat:.3f}")
+
+    console.print()
+    console.print(results_table)
+
+    # Components table
+    if components:
+        console.print()
+        comp_table = Table(title="Detected Components", box=box.ROUNDED, show_header=True)
+        comp_table.add_column("Component", style="cyan")
+        comp_table.add_column("Description", style="white")
+        comp_table.add_column("Condition", justify="center")
+
+        for component in components:
+            name = component.get('name', 'unknown')
+            desc = component.get('description', '')
+            condition = component.get('condition', 'unknown')
+            threat_lvl = component.get('threat_level', 'unknown')
+
+            # Color code by threat level
+            if threat_lvl == 'benign':
+                cond_color = "green"
+            elif threat_lvl == 'moderate':
+                cond_color = "yellow"
+            elif threat_lvl == 'elevated':
+                cond_color = "orange1"
+            else:
+                cond_color = "white"
+
+            comp_table.add_row(name, desc, f"[{cond_color}]{condition}[/{cond_color}]")
+
+        console.print(comp_table)
+
+    # Characteristics
+    if characteristics:
+        console.print()
+        char_table = Table(title="Characteristics", box=box.ROUNDED, show_header=False)
+        char_table.add_column("Property", style="cyan", width=20)
+        char_table.add_column("Value", style="white")
+
+        for key, value in characteristics.items():
+            char_table.add_row(key.replace('_', ' ').title(), str(value))
+
+        console.print(char_table)
+
+    # Threat Assessment Details
+    if threat_assessment:
+        console.print()
+        threat_table = Table(title="Threat Assessment Details", box=box.ROUNDED, show_header=False)
+        threat_table.add_column("Indicator", style="cyan", width=25)
+        threat_table.add_column("Assessment", style="white")
+
+        for key, value in threat_assessment.items():
+            if isinstance(value, list):
+                value_str = ', '.join(value) if value else 'none'
+            else:
+                value_str = str(value)
+            threat_table.add_row(key.replace('_', ' ').title(), value_str)
+
+        console.print(threat_table)
+
+    # Reasoning panel
+    console.print()
+    console.print(Panel(
+        notes,
+        title="Analysis Reasoning",
+        border_style=threat_color,
+        padding=(1, 2)
+    ))
 
     # Setup output directory
     output_dir = os.path.join(os.path.dirname(os.path.abspath(image_path)), "..", "output")
@@ -469,7 +592,7 @@ def main(image_path: str, prior_belief: Dict = None):
     base_name = os.path.splitext(os.path.basename(image_path))[0]
 
     # Save JSON output
-    print("\n[2/2] Saving JSON results...")
+    console.print("\n[bold cyan][2/2][/bold cyan] Saving JSON results...")
     json_output_path = os.path.join(output_dir, f"{base_name}_assessment.json")
 
     output_data = {
@@ -492,8 +615,8 @@ def main(image_path: str, prior_belief: Dict = None):
     with open(json_output_path, 'w') as f:
         json.dump(output_data, f, indent=2)
 
-    print(f"✓ JSON saved to: {json_output_path}")
-    print(f"\nAnalysis complete! Results saved to {output_dir}/")
+    console.print(f"[green]✓ JSON saved to:[/green] {json_output_path}")
+    console.print(f"\n[bold green]Analysis complete![/bold green] Results saved to {output_dir}/")
 
     return p_threat
 
@@ -574,13 +697,25 @@ if __name__ == "__main__":
         with open(sequence_output_path, 'w') as f:
             json.dump(sequence_data, f, indent=2)
 
-        print(f"\n{'='*60}")
-        print(f"SEQUENTIAL ASSESSMENT COMPLETE")
-        print(f"{'='*60}")
-        print(f"Initial threat: {assessments[0]['p_threat']:.3f}")
-        print(f"Final threat: {assessments[-1]['p_threat']:.3f}")
-        print(f"Belief shift: {assessments[-1]['p_threat'] - assessments[0]['p_threat']:+.3f}")
-        print(f"\nResults saved to: {sequence_output_path}")
+        # Final summary
+        initial_threat = assessments[0]['p_threat']
+        final_threat = assessments[-1]['p_threat']
+        belief_shift = final_threat - initial_threat
+
+        shift_color = "red" if belief_shift > 0.1 else "green" if belief_shift < -0.1 else "yellow"
+
+        summary_table = Table(title="SEQUENTIAL ASSESSMENT COMPLETE", box=box.DOUBLE_EDGE, show_header=False)
+        summary_table.add_column("Metric", style="bold cyan", width=20)
+        summary_table.add_column("Value", justify="right")
+
+        summary_table.add_row("Initial Threat", f"{initial_threat:.3f}")
+        summary_table.add_row("Final Threat", f"[bold]{final_threat:.3f}[/bold]")
+        summary_table.add_row("Belief Shift", f"[{shift_color}]{belief_shift:+.3f}[/{shift_color}]")
+        summary_table.add_row("Frames Analyzed", f"{len(assessments)}")
+
+        console.print()
+        console.print(summary_table)
+        console.print(f"\n[green]Results saved to:[/green] {sequence_output_path}")
 
     else:
         # Single file mode (image or video)
@@ -612,12 +747,13 @@ if __name__ == "__main__":
 
         if file_ext in video_extensions:
             # Video processing mode
-            print(f"\n{'='*60}")
-            print(f"VIDEO PROCESSING MODE")
-            print(f"{'='*60}")
-            print(f"Input: {file_path}")
-            print(f"Target FPS: {target_fps}")
-            print(f"Max frames: {max_frames if max_frames else 'unlimited'}")
+            console.print(Panel.fit(
+                f"[cyan]Input:[/cyan] {file_path}\n"
+                f"[cyan]Target FPS:[/cyan] {target_fps}\n"
+                f"[cyan]Max frames:[/cyan] {max_frames if max_frames else 'unlimited'}",
+                title="VIDEO PROCESSING MODE",
+                border_style="bold cyan"
+            ))
 
             # Extract frames
             try:
@@ -673,18 +809,30 @@ if __name__ == "__main__":
             # Clean up temporary frames
             if frame_paths:
                 temp_dir = os.path.dirname(frame_paths[0])
-                print(f"\nCleaning up temporary frames: {temp_dir}")
+                console.print(f"\n[dim]Cleaning up temporary frames: {temp_dir}[/dim]")
                 shutil.rmtree(temp_dir)
 
-            print(f"\n{'='*60}")
-            print(f"VIDEO ASSESSMENT COMPLETE")
-            print(f"{'='*60}")
-            print(f"Frames analyzed: {len(frame_paths)}")
-            print(f"Initial threat: {assessments[0]['p_threat']:.3f}")
-            print(f"Final threat: {assessments[-1]['p_threat']:.3f}")
-            print(f"Belief shift: {assessments[-1]['p_threat'] - assessments[0]['p_threat']:+.3f}")
-            print(f"Final confidence: {assessments[-1]['confidence']:.3f}")
-            print(f"\nResults saved to: {video_output_path}")
+            # Final video summary
+            initial_threat = assessments[0]['p_threat']
+            final_threat = assessments[-1]['p_threat']
+            belief_shift = final_threat - initial_threat
+            final_confidence = assessments[-1]['confidence']
+
+            shift_color = "red" if belief_shift > 0.1 else "green" if belief_shift < -0.1 else "yellow"
+
+            summary_table = Table(title="VIDEO ASSESSMENT COMPLETE", box=box.DOUBLE_EDGE, show_header=False)
+            summary_table.add_column("Metric", style="bold cyan", width=20)
+            summary_table.add_column("Value", justify="right")
+
+            summary_table.add_row("Frames Analyzed", f"{len(frame_paths)}")
+            summary_table.add_row("Initial Threat", f"{initial_threat:.3f}")
+            summary_table.add_row("Final Threat", f"[bold]{final_threat:.3f}[/bold]")
+            summary_table.add_row("Belief Shift", f"[{shift_color}]{belief_shift:+.3f}[/{shift_color}]")
+            summary_table.add_row("Final Confidence", f"{final_confidence:.3f}")
+
+            console.print()
+            console.print(summary_table)
+            console.print(f"\n[green]Results saved to:[/green] {video_output_path}")
 
         else:
             # Single image mode
