@@ -13,9 +13,12 @@ Thousands of satellites orbit Earth today. SpaceX alone plans to deploy **1 mill
 
 Satellites are no longer passive—they maneuver unpredictably, creating collision risks with no margin for error.
 
-## The Solution: StarGuard
+## The Solution:
+<p align="left">
+  <img src="https://drive.google.com/uc?export=view&id=1lbUgbUyeI4kUeUHzc2t0AbJ29y34Fm_s" alt="Starguard System Diagram" width="200em"/>
+</p>
 
-TreeSats' **StarGuard** system provides three autonomous capabilities:
+TreeSats' **Starguard** system provides three autonomous capabilities:
 
 1. **Collision Detection** - YOLOv8 + BoT-SORT identify satellites and debris in star tracker imagery, UKF estimates trajectories from angles-only measurements
 2. **Collision Avoidance** - Convex optimization computes fuel-optimal evasive maneuvers
@@ -102,7 +105,7 @@ treesats/
 
 # Detailed Technical Overview
 
-## How StarGuard Works
+## How Starguard Works
 
 ### 1. Detection Pipeline
 
