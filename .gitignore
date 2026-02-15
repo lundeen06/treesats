@@ -50,3 +50,4 @@ data/
 *.jpg
 *.pdf
 plots/
+output/sandbox/tracked_output.mp4
