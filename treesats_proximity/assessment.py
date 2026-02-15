@@ -169,18 +169,16 @@ def assess_with_cosmos(image_path: str, prior_belief: Dict = None) -> Tuple[floa
 
     image_b64 = encode_image_to_base64(image_path)
 
-    # Build prompt with prior context if available
+    # Build prompt with qualitative prior context (NO numerical p_threat to avoid anchoring)
     prior_context = ""
     if prior_belief:
+        prior_notes = prior_belief.get('notes', 'None')
         prior_context = (
-            f"\n\nPRIOR ASSESSMENT FROM PREVIOUS OBSERVATION:\n"
-            f"Previous threat estimate: {prior_belief.get('p_threat', 0.5):.3f}\n"
-            f"Previous uncertainty: {prior_belief.get('var_threat', 0.2):.3f}\n"
-            f"Previous observations: {prior_belief.get('notes', 'None')}\n\n"
-            f"Use this prior information to inform your current assessment. "
-            f"Update your belief based on NEW evidence in the current image. "
-            f"If new evidence contradicts the prior, explain what changed and why. "
-            f"If new evidence confirms the prior, increase your confidence."
+            f"\n\nCONTEXT FROM PREVIOUS FRAME:\n"
+            f"Previous observations: {prior_notes}\n\n"
+            f"Use this context to track changes, but make your OWN independent threat assessment "
+            f"based on what you see in THIS frame. Do NOT anchor on any previous numerical estimates. "
+            f"Note what has changed, what has stayed the same, or what new features are now visible."
         )
 
     content = [
@@ -190,6 +188,21 @@ def assess_with_cosmos(image_path: str, prior_belief: Dict = None) -> Tuple[floa
                 "You are an expert space situational awareness analyst evaluating potential threats. "
                 "Assess this space object carefully, considering both passive characteristics and active threat indicators.\n\n"
                 f"{prior_context}\n\n"
+                "CRITICAL - AVOID HALLUCINATION:\n"
+                "• ONLY report components you can CLEARLY see with high confidence\n"
+                "• Do NOT infer or imagine components from ambiguous pixels or shadows\n"
+                "• If you cannot clearly identify something, mark it as 'unknown' or 'unclear'\n"
+                "• When in doubt, describe what you see literally (e.g., 'extended appendage') not what you think it might be\n"
+                "• Absence of evidence is NOT evidence of absence - but don't fabricate evidence\n\n"
+                "UNCERTAINTY & PRECISION GUIDANCE:\n"
+                "• Single images show limited viewing angles - many components may be hidden\n"
+                "• Be appropriately uncertain given observational limitations\n"
+                "• Provide p_threat to 3 decimal places (e.g., 0.247, 0.683, NOT 0.2 or 0.7)\n"
+                "• Provide confidence to 3 decimal places (e.g., 0.523, NOT 0.5)\n"
+                "• Avoid rounding to convenient intervals - small differences matter\n"
+                "• Real observations have NATURAL VARIANCE - each frame will show slightly different lighting, angles, aspects\n"
+                "• DO NOT give the same probability twice - each observation is unique with measurement noise\n"
+                "• Vary your estimates frame-to-frame based on what's visible/obscured in THIS specific view\n\n"
                 "THREAT CALIBRATION GUIDELINES:\n"
                 "• LOW RISK (0.0-0.3): Passive satellites with scientific/civilian purpose\n"
                 "  - Examples: Cassini-class spacecraft, weather satellites, telescopes\n"
@@ -206,12 +219,11 @@ def assess_with_cosmos(image_path: str, prior_belief: Dict = None) -> Tuple[floa
                 "  - Examples: Objects resembling weapons platforms, aggressive proximity behavior, military designs\n"
                 "  - Indicators: Weapon-like appendages, kinetic kill vehicle characteristics, aggressive maneuvers\n"
                 "  - Includes any object clearly designed for offensive/defensive space operations\n\n"
-                "KEY THREAT INDICATORS TO ASSESS:\n"
-                "1. **Maneuverability**: Propulsion systems, attitude control capability, fuel reserves\n"
-                "2. **Weaponization**: Arms/manipulators, kinetic impactors, directed energy systems, projectile launchers\n"
-                "3. **Stealth/Deception**: Low observability, disguised components, unexpected behavior\n"
-                "4. **Proximity Intent**: Close approaches, orbital matching, non-cooperative rendezvous\n"
-                "5. **Design Purpose**: Civilian science vs military/defensive design patterns\n\n"
+                "IF YOU CLEARLY OBSERVE THESE, THEY ARE THREAT INDICATORS:\n"
+                "1. **Maneuverability**: IF you see visible propulsion systems or attitude control thrusters\n"
+                "2. **Weaponization**: IF you see articulated arms, manipulators, or weapon-like appendages (DO NOT assume these exist)\n"
+                "3. **Design Purpose**: Assess whether visible design suggests civilian/scientific vs military purpose\n"
+                "Note: Most satellites will NOT have weapons or robotic arms - the default assumption is benign unless clearly visible.\n\n"
                 "Provide analysis in ONLY valid JSON format (no markdown, no code blocks):\n\n"
                 "{\n"
                 '  "object_type": "satellite|debris|rocket_fairing|upper_stage|unknown|weapon_system",\n'
@@ -257,7 +269,7 @@ def assess_with_cosmos(image_path: str, prior_belief: Dict = None) -> Tuple[floa
         "model": COSMOS_MODEL,
         "messages": [{"role": "user", "content": content}],
         "max_tokens": 2048,
-        "temperature": 0.1
+        "temperature": 0.7  # Higher temperature for more variance/noise between frames
     }
 
     response = requests.post(COSMOS_API_URL, headers=HEADERS, json=payload)
@@ -282,7 +294,14 @@ def assess_with_cosmos(image_path: str, prior_belief: Dict = None) -> Tuple[floa
             # Extract raw observation from VLM
             obs_p_threat = float(data.get("p_threat", 0.5))
             confidence = float(data.get("confidence", 0.8))
+
+            # Boost initial uncertainty - single images don't show all angles
+            # Start with higher variance (lower confidence) since we have limited perspective
             obs_var_threat = 1.0 - confidence
+            if not prior_belief:
+                # For first observation, increase uncertainty by 50%
+                obs_var_threat = min(0.5, obs_var_threat * 1.5)
+                confidence = 1.0 - obs_var_threat
 
             # Apply Bayesian update if we have a prior
             if prior_belief:
