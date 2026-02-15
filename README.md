@@ -1,4 +1,4 @@
-# TreeSats 🛰️🌲: 
+# TreeSats 🛰️🌲
 ## Defending Space Sovereignty
 
 **Satellites that protect themselves: end-to-end autonomous satellite collision avoidance in communication-denied environments**
