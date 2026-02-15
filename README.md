@@ -21,8 +21,22 @@ Satellites are no longer passive—they maneuver unpredictably, creating collisi
 TreeSats' **Starguard** system provides three autonomous capabilities:
 
 1. **Collision Detection** - YOLOv8 + BoT-SORT identify satellites and debris in star tracker imagery, UKF estimates trajectories from angles-only measurements
-2. **Collision Avoidance** - Convex optimization computes fuel-optimal evasive maneuvers
-3. **Threat Assessment** - NVIDIA Cosmos VLM classifies satellite types and maneuver intent
+   <p align="center">
+     <img src="https://drive.google.com/uc?export=view&id=1xzDJ-i59cHXLY0aJ8GwoAdINu9SL0_rB" alt="Detection" width="40%"/>
+     <img src="https://drive.google.com/thumbnail?id=1NW5rMCgtGMTp9HBoaMQg_mX1bjjVmRvC&sz=w1000" alt="Collision Avoidance" width="50%"/>
+   </p>
+
+2. **Collision Avoidance** - Convex optimization computes fuel-optimal evasive maneuvers for non-adversarial and adversarial satellites
+<p align="center">
+  <img src="https://drive.google.com/thumbnail?id=1DY_pNTBg9X7kO-Gb5fsW9xsS55nn07S-&sz=w1000" alt="Collision Avoidance" width="55%"/>
+  <img src="https://drive.google.com/thumbnail?id=1s6pmjE2kwMOZi4Kas_SFDr-vOzMF5uRe&sz=w1000" alt="Threat Assessment" width="35%"/>
+</p>
+
+3. **Threat Assessment** - NVIDIA Cosmos VLM conducts a satellite threat assessment for satellites in close proximity orbits
+<p align="center">
+  <img src="https://drive.google.com/thumbnail?id=1VvNbrP6w-B9JxoqLWdP5gTR2MLfsx2OF&sz=w1000" alt="Demo 0" width="60%"/>
+  <img src="https://drive.google.com/uc?export=view&id=1BDNoNxncAkacbsRdfgB7F8g53OMLWowd" alt="Demo 2" width="60%"/>
+</p>
 
 All processing happens onboard using existing star tracker cameras. No GPS. No ground link required.
 
