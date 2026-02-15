@@ -1,6 +1,6 @@
-# TreeSats 🛰️🌲: Defending Your Skies
+# TreeSats 🛰️🌲: Defending Space Sovereignty
 
-**Autonomous orbital collision detection, avoidance, and threat assessment in communication-denied environments.**
+**Satellites that protect themselves: end-to-end autonomous satellite collision avoidance in communication-denied environments**
 
 TreeSats enables satellites to detect collisions, execute evasive maneuvers, and assess threats—all without GPS or ground contact. Using only star tracker cameras (standard spacecraft hardware), TreeSats provides autonomous protection in contested space.
 
