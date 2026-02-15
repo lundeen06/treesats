@@ -11,11 +11,51 @@ including orbital elements, star tracker settings, and visualization options.
 
 SATELLITE = {
     'altitude': 550,        # km above Earth's surface
-    'eccentricity': 0.0001, # orbital eccentricity (0 = circular orbit)
+    'eccentricity': 0.0,    # orbital eccentricity (0 = circular orbit)
     'inclination': 53.0,    # degrees (orbital inclination)
     'omega': 0.0,           # degrees (argument of periapsis)
     'Omega': 0.0,           # degrees (RAAN - right ascension of ascending node)
     'M': 0.0                # degrees (mean anomaly - starting position in orbit)
+}
+
+# ==============================================================================
+# ADVERSARY / TRANSFER ORBIT (e.g. for collision-avoidance scenarios)
+# ==============================================================================
+# The collision-avoidance test uses semi_major_axis (not altitude) for the adversary.
+# Keep them consistent: semi_major_axis = CONSTANTS['earth_radius_km'] + altitude.
+# Optimizer output (sim/optimize_adversary_min_miss.py) gives both; paste as-is.
+# With M=0 the adversary is at periapsis: initial radius = a*(1-e), not a.
+
+# ADVERSARY_TRANSFER = {
+#     'altitude': 548.5,              # 1.5 km below Chief
+#     'semi_major_axis': 6927.387,    # (Rc + Rd) / 2
+#     'eccentricity': 0.000108,       # Extremely close to circular
+#     'inclination': 53.0,
+#     'omega': 359.9708,              # The critical fix (starts 0.0292 deg behind)
+#     'Omega': 0.0,
+#     'M': 0.0
+# }
+# Previous elliptic params (M=0 at periapsis → ~0 km separation at t=0, min separation ~0.002 km):
+# ADVERSARY_TRANSFER = {
+#     'altitude': 579.9076,
+#     'semi_major_axis': 6958.0446,
+#     'eccentricity': 0.004298,
+#     'inclination': 53.0,
+#     'omega': 360,
+#     'Omega': 0.0,
+#     'M': 0.0
+# }
+
+ADVERSARY_TRANSFER = {
+    # To have adversary "start 29 km away": use circular orbit at chief_alt + 29 km so at M=0 separation ≈ 29 km.
+    # (With e>0 and M=0, adversary is at periapsis r=a(1-e) ≈ 6928 km → ~0 km separation.)
+    'altitude': 519.2244,                  # ~29 km above chief (550 km) for initial separation ~29 km
+    'semi_major_axis': 6897.3614,         # Re + 579 ≈ 6957 km; circular so r ≡ 6957
+    'eccentricity': 0.005009,                # circular: at M=0 adversary is 6957-6928 ≈ 29 km from chief
+    'inclination': 53.0,
+    'omega': 240.8444,
+    'Omega': 0.0,
+    'M': 118.8282
 }
 
 # ==============================================================================

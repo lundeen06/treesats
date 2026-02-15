@@ -1,0 +1,70 @@
+% Minimum-fuel collision avoidance: convex QP formulation
+% Corresponds to sat/control/collision_avoidance.py
+
+\documentclass[11pt]{article}
+\usepackage{amsmath,amssymb,bm}
+\usepackage[margin=1in]{geometry}
+
+\title{Minimum-Fuel Collision Avoidance: Convex QP}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Setup}
+\begin{itemize}
+  \item Chief satellite: initial state $(\bm{r}_c(0), \bm{v}_c(0))$ in ECI (position and velocity).
+  \item Constellation: deputies $k = 1,\ldots,K$ with known ECI positions over time.
+  \item Nominal trajectories: propagate chief and constellation over one orbit to get $\bm{r}_c(t)$, $\bm{p}_k(t)$ in ECI [km].
+  \item Impulsive maneuver at $t=0$: apply $\Delta\bm{v} \in \mathbb{R}^3$ (ECI, km/s). New velocity is $\bm{v}_c(0) + \Delta\bm{v}$; position at $t=0$ unchanged.
+\end{itemize}
+
+\section{Linearized effect of $\Delta\bm{v}$}
+The sensitivity of chief position at time $t$ to initial velocity is the $3\times3$ matrix
+\[
+  \bm{\Phi}_{rv}(t) = \frac{\partial \bm{r}_c(t)}{\partial \bm{v}_c(0)}.
+\]
+To first order, the chief position after the maneuver is
+\[
+  \bm{r}_c^{\mathrm{new}}(t) = \bm{r}_c(t) + \bm{\Phi}_{rv}(t) \, \Delta\bm{v}.
+\]
+(Deputy positions are unchanged.)
+
+\section{Distance constraint (linearized)}
+For deputy $k$ at time $t$, the relative position is
+\[
+  \bm{r}_{\mathrm{rel}}(t,k) = \bm{r}_c(t) - \bm{p}_k(t), \qquad d(t,k) = \|\bm{r}_{\mathrm{rel}}(t,k)\|, \qquad \bm{u}(t,k) = \frac{\bm{r}_{\mathrm{rel}}(t,k)}{d(t,k)}.
+\]
+After the maneuver, the new relative position is
+\[
+  \bm{r}_{\mathrm{rel}}^{\mathrm{new}} = \bm{r}_{\mathrm{rel}} + \bm{\Phi}_{rv}(t) \, \Delta\bm{v}.
+\]
+The first-order change in distance along the line of sight $\bm{u}$ is
+\[
+  \Delta d \approx \bm{u}^\top \bm{\Phi}_{rv}(t) \, \Delta\bm{v}.
+\]
+We require the new distance to be at least $r_{\min}$ (the minimum allowed separation, in km):
+\[
+  d + \Delta d \geq r_{\min} \quad \Leftrightarrow \quad \bm{u}^\top \bm{\Phi}_{rv}(t) \, \Delta\bm{v} \geq r_{\min} - d.
+\]
+Define one linear inequality per constrained $(t,k)$:
+\[
+  \bm{a}_{i}^\top \Delta\bm{v} \geq b_i, \qquad \bm{a}_i = \bm{\Phi}_{rv}(t)^\top \bm{u}(t,k), \qquad b_i = r_{\min} - d(t,k).
+\]
+
+\section{Convex QP (minimum fuel)}
+We minimize the squared magnitude of the impulse (minimum fuel in the 2-norm sense) subject to the linearized safety constraints:
+\begin{equation}
+\boxed{
+  \begin{aligned}
+    \min_{\Delta\bm{v} \in \mathbb{R}^3} \quad & \|\Delta\bm{v}\|_2^2 \\
+    \text{s.t.} \quad & \bm{A} \Delta\bm{v} \geq \bm{b}.
+  \end{aligned}
+}
+\end{equation}
+Here, $\bm{A}$ has one row $\bm{a}_i^\top$ per constrained pair $(t,k)$, and $\bm{b}$ is the vector of $b_i$. The problem is a convex quadratic program (quadratic objective, linear inequality constraints) and is solved with a QP solver (e.g., CVXPY).
+
+\section{Constraint selection}
+Constraints are not added at every $(t,k)$. For each deputy $k$, they are added at the time of \emph{nominal} closest approach $t_{\min}(k)$ and neighboring time steps, and only when the nominal distance $d(t,k) < \text{\texttt{constraint\_margin\_km}}$. After solving, the trajectory $(\bm{r}_c(0), \bm{v}_c(0)+\Delta\bm{v})$ is propagated and checked at all $(t,k)$; if any distance is below $r_{\min}$, additional constraints at those $(t,k)$ are added and the QP is re-solved (verification loop).
+\end{document}

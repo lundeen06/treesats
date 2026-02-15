@@ -105,13 +105,13 @@ def create_constellation(n_sats=10000, sat=None):
             M_list.append(np.random.uniform(0, 2 * np.pi))
 
     # Create constellation array for tensorgator
-    # Format: [a, e, i, omega, Omega, M] for each satellite
+    # Tensorgator expects [a, e, inc, Omega, omega, M0] (RAAN before arg of periapsis)
     constellation = np.column_stack([
         np.array(a_list),
         np.array(e_list),
         np.array(i_list),
-        np.array(omega_list),
         np.array(Omega_list),
+        np.array(omega_list),
         np.array(M_list)
     ])
 
