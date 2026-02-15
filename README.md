@@ -15,7 +15,7 @@ Satellites are no longer passive—they maneuver unpredictably, creating collisi
 
 ## The Solution:
 <p align="left">
-  <img src="https://drive.google.com/uc?export=view&id=1lbUgbUyeI4kUeUHzc2t0AbJ29y34Fm_s" alt="Starguard System Diagram" width="300em"/>
+  <img src="https://drive.google.com/uc?export=view&id=1lbUgbUyeI4kUeUHzc2t0AbJ29y34Fm_s" alt="Starguard System Diagram" width="250em"/>
 </p>
 
 TreeSats' **Starguard** system provides three autonomous capabilities:
