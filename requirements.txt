@@ -4,3 +4,4 @@ matplotlib
 cvxpy
 tqdm
 opencv-python
+requests

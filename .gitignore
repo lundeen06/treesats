@@ -19,13 +19,14 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-.DS_Store
 
 # Virtual environments
 venv/
 .venv/
 ENV/
 env/
+.env
+.DS_Store
 
 # IDE
 .vscode/
