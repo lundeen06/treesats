@@ -1,24 +1,26 @@
 # TreeSats 🛰️🌲
-## Defending Space Sovereignty
+## Autonomous collision avoidance without a ground link
 
-**Satellites that protect themselves: end-to-end autonomous satellite collision avoidance in communication-denied environments**
+**TreeSats explores how satellites can detect, characterize, and avoid nearby objects using onboard sensing and compute.**
 
-TreeSats enables satellites to detect collisions, execute evasive maneuvers, and assess threats—all without GPS or ground contact. Using only star tracker cameras (standard spacecraft hardware), TreeSats provides autonomous protection in contested space.
+Its Starguard prototype connects synthetic orbital simulation, star-tracker imagery, computer vision, angles-only navigation, threat assessment, and maneuver optimization into an end-to-end autonomy pipeline designed for GPS- and communications-denied environments.
+
+> **Prototype status:** This is a research and demonstration system, not flight-qualified collision-avoidance software. Its models, scenarios, and performance claims should be evaluated in that context.
 
 ---
 
 ## The Problem
 
-Thousands of satellites orbit Earth today. SpaceX alone plans to deploy **1 million** by 2030. Meanwhile, **GPS and communications jamming** is expanding across Eastern Europe, Southeast Asia, and Myanmar—affecting even commercial satellites. Ground station control isn't viable at this scale in contested regions.
+As orbital traffic grows, centralized screening and ground-in-the-loop response become harder to scale—especially when navigation or communications are disrupted. A spacecraft that can reason locally about nearby objects could preserve valuable response time when the ground link is unavailable.
 
 Satellites are no longer passive—they maneuver unpredictably, creating collision risks with no margin for error.
 
-## The Solution:
+## The Solution
 <p align="left">
   <img src="https://drive.google.com/uc?export=view&id=1lbUgbUyeI4kUeUHzc2t0AbJ29y34Fm_s" alt="Starguard System Diagram" width="250em"/>
 </p>
 
-TreeSats' **Starguard** system provides three autonomous capabilities:
+TreeSats' **Starguard** prototype connects three autonomous capabilities:
 
 1. **Collision Detection** - YOLOv8 + BoT-SORT identify satellites and debris in star tracker imagery, UKF estimates trajectories from angles-only measurements
    <p align="center">
@@ -69,7 +71,7 @@ python main.py --mode pipeline
 
 - **Communication-Independent**: Operates without GPS or ground contact using only star tracker imagery
 - **Autonomous**: Real-time collision detection, avoidance, and threat assessment without ground intervention
-- **Scalable**: GPU acceleration handles 10,000+ satellites simultaneously
+- **Scalable simulation**: GPU-accelerated propagation supports 10,000+ simulated satellites
 - **Mission-Aware**: Fuel-optimal maneuvers via convex optimization
 
 ---
